@@ -2,6 +2,7 @@ import {
   App,
   FuzzySuggestModal,
   ItemView,
+  Modal,
   Notice,
   Plugin,
   PluginSettingTab,
@@ -10,6 +11,7 @@ import {
   TFile,
   TFolder,
   WorkspaceLeaf,
+  normalizePath,
   setIcon,
 } from "obsidian";
 
@@ -29,6 +31,8 @@ interface OneMinuteEnglishSettings {
   editingValue: string;
   completedValue: string;
   publishedValue: string;
+  quickCaptureFolder: string;
+  quickCaptureFilenameFormat: string;
   customTabs: FolderTab[];
 }
 
@@ -39,6 +43,8 @@ const DEFAULT_SETTINGS: OneMinuteEnglishSettings = {
   editingValue: "编辑中",
   completedValue: "已完成",
   publishedValue: "已发布",
+  quickCaptureFolder: "",
+  quickCaptureFilenameFormat: "",
   customTabs: [],
 };
 
@@ -66,6 +72,52 @@ class FolderSuggestModal extends FuzzySuggestModal<TFolder> {
 
   onChooseItem(folder: TFolder): void {
     this.onChoose(folder);
+  }
+}
+
+class QuickCaptureModal extends Modal {
+  private text = "";
+
+  constructor(app: App, private readonly onSave: (content: string) => Promise<void>) {
+    super(app);
+  }
+
+  onOpen(): void {
+    const { contentEl } = this;
+    this.modalEl.addClass("ome-capture-modal-shell");
+    contentEl.addClass("ome-capture-modal");
+    contentEl.createEl("h2", { text: "快速记录" });
+    contentEl.createEl("p", { cls: "ome-capture-description", text: "输入内容后保存为新的 Markdown 文档。" });
+    const textarea = contentEl.createEl("textarea", {
+      cls: "ome-capture-textarea",
+      attr: { placeholder: "在这里输入内容…", "aria-label": "快速记录内容" },
+    });
+    textarea.addEventListener("input", () => { this.text = textarea.value; });
+    const actions = contentEl.createDiv({ cls: "ome-capture-actions" });
+    const cancel = actions.createEl("button", { text: "取消" });
+    cancel.addEventListener("click", () => this.close());
+    const save = actions.createEl("button", { cls: "mod-cta", text: "保存" });
+    save.addEventListener("click", () => void this.save());
+    textarea.addEventListener("keydown", (event) => {
+      if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
+        event.preventDefault();
+        void this.save();
+      }
+    });
+    window.setTimeout(() => textarea.focus(), 0);
+  }
+
+  onClose(): void {
+    this.contentEl.empty();
+  }
+
+  private async save(): Promise<void> {
+    if (!this.text.trim()) {
+      new Notice("请输入要保存的内容");
+      return;
+    }
+    await this.onSave(this.text);
+    this.close();
   }
 }
 
@@ -133,6 +185,65 @@ class OneMinuteEnglishView extends ItemView {
     this.renderMaterials(columns.createDiv({ cls: "ome-panel ome-material-panel" }));
     this.renderTopics(columns.createDiv({ cls: "ome-panel ome-topic-panel" }));
     root.createDiv({ cls: "ome-bottom-spacer", attr: { "aria-hidden": "true" } });
+    this.renderQuickCaptureButton(root);
+  }
+
+  private renderQuickCaptureButton(root: HTMLElement): void {
+    const button = root.createEl("button", {
+      cls: "ome-quick-capture-button",
+      attr: { "aria-label": "新建快速记录" },
+    });
+    setIcon(button, "plus");
+    button.addEventListener("click", () => {
+      if (!this.plugin.settings.quickCaptureFolder.trim() || !this.plugin.settings.quickCaptureFilenameFormat.trim()) {
+        new Notice("请先在 One Minute English 设置中配置“快速记录目录”和“文件名时间格式”");
+        return;
+      }
+      new QuickCaptureModal(this.app, (content) => this.saveQuickCapture(content)).open();
+    });
+  }
+
+  private async saveQuickCapture(content: string): Promise<void> {
+    const folder = this.plugin.settings.quickCaptureFolder.replace(/^\/+|\/+$/g, "");
+    const targetFolder = this.app.vault.getAbstractFileByPath(folder);
+    if (!(targetFolder instanceof TFolder)) {
+      new Notice("配置的快速记录目录不存在，请重新选择");
+      return;
+    }
+    const formatted = this.formatDate(new Date(), this.plugin.settings.quickCaptureFilenameFormat);
+    const safeName = formatted.replace(/[\\/:*?"<>|]/g, "-").trim();
+    if (!safeName) {
+      new Notice("文件名时间格式无法生成有效文件名，请重新配置");
+      return;
+    }
+    let path = normalizePath(`${folder}/${safeName}.md`);
+    let suffix = 2;
+    while (this.app.vault.getAbstractFileByPath(path)) {
+      path = normalizePath(`${folder}/${safeName}-${suffix}.md`);
+      suffix += 1;
+    }
+    const file = await this.app.vault.create(path, content);
+    new Notice(`已保存：${file.basename}`);
+    await this.app.workspace.getLeaf(false).openFile(file);
+  }
+
+  private formatDate(date: Date, format: string): string {
+    const pad = (value: number): string => String(value).padStart(2, "0");
+    const values: Record<string, string> = {
+      YYYY: String(date.getFullYear()),
+      YY: String(date.getFullYear()).slice(-2),
+      MM: pad(date.getMonth() + 1),
+      M: String(date.getMonth() + 1),
+      dd: pad(date.getDate()),
+      d: String(date.getDate()),
+      HH: pad(date.getHours()),
+      H: String(date.getHours()),
+      mm: pad(date.getMinutes()),
+      m: String(date.getMinutes()),
+      ss: pad(date.getSeconds()),
+      s: String(date.getSeconds()),
+    };
+    return format.replace(/YYYY|YY|MM|M|dd|d|HH|H|mm|m|ss|s/g, (token) => values[token]);
   }
 
   private renderHeader(root: HTMLElement): void {
@@ -362,6 +473,14 @@ class OneMinuteEnglishSettingTab extends PluginSettingTab {
     containerEl.createEl("p", { cls: "setting-item-description", text: "目录路径均相对于当前 Obsidian 库；列表会自动包含所有子目录中的 Markdown 文档。" });
     this.folderSetting("素材目录", "主页“素材”标签加载的目录。", "materialFolder");
     this.folderSetting("话题目录", "右侧“话题列表”加载的目录。", "topicFolder");
+    this.folderSetting("快速记录目录", "右下角 + 按钮创建的 Markdown 文档保存到这里。", "quickCaptureFolder");
+    new Setting(containerEl)
+      .setName("文件名时间格式")
+      .setDesc("快速记录的文件名格式。支持 YYYY、YY、MM、M、dd、d、HH、H、mm、m、ss、s，例如：YYYY年MM月dd日。")
+      .addText((text) => text.setPlaceholder("YYYY年MM月dd日").setValue(this.plugin.settings.quickCaptureFilenameFormat).onChange(async (value) => {
+        this.plugin.settings.quickCaptureFilenameFormat = value.trim();
+        await this.plugin.saveSettings();
+      }));
     new Setting(containerEl)
       .setName("状态属性")
       .setDesc("用于区分话题状态的 Frontmatter / Properties 属性名，例如 status。")
@@ -374,7 +493,7 @@ class OneMinuteEnglishSettingTab extends PluginSettingTab {
     this.valueSetting("“已发布”对应值", "publishedValue", "已发布");
   }
 
-  private folderSetting(name: string, description: string, key: "materialFolder" | "topicFolder"): void {
+  private folderSetting(name: string, description: string, key: "materialFolder" | "topicFolder" | "quickCaptureFolder"): void {
     new Setting(this.containerEl)
       .setName(name)
       .setDesc(description)
