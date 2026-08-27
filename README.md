@@ -23,3 +23,20 @@
 4. 打开插件设置，选择素材目录、话题目录，并配置话题状态属性。
 5. 点击左侧边栏的语言图标，或在命令面板执行“打开主页”。
 
+## 发布新版本
+
+项目已配置 GitHub Actions。推送与 `manifest.json` 版本号相同的 Git 标签后，会自动构建插件、创建 GitHub Release，并上传 `main.js`、`manifest.json`、`styles.css` 和安装 ZIP。
+
+例如发布 `1.0.1`：
+
+```powershell
+npm run version:set -- 1.0.1
+npm run build
+git add manifest.json versions.json package.json main.js
+git commit -m "Release 1.0.1"
+git push origin main
+git tag 1.0.1
+git push origin 1.0.1
+```
+
+标签必须使用 `1.0.1` 这种格式，不要添加 `v`，并且必须与 `manifest.json` 中的 `version` 完全一致。发布进度可在仓库的 **Actions** 页面查看，完成后版本会显示在仓库右侧的 **Releases** 区域。
