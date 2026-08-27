@@ -48,10 +48,10 @@
 
 .ome-columns { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 18px; min-height: 590px; }
 .ome-panel { min-width: 0; display: flex; flex-direction: column; overflow: hidden; }
-.ome-material-panel { overflow: visible; background: transparent; border: 0; }
-.ome-material-panel .ome-panel-body { flex: 1; border: 1px solid var(--ome-border); border-radius: 0 14px 14px 14px; background: var(--background-primary-alt); padding: 18px; overflow: hidden; display: flex; flex-direction: column; }
+.ome-material-panel { padding: 18px; }
+.ome-material-panel .ome-panel-body { flex: 1; padding-top: 12px; overflow: hidden; display: flex; flex-direction: column; }
 
-.ome-tabs { min-height: 42px; display: flex; align-items: end; border-bottom: 1px solid var(--ome-border); gap: 3px; overflow-x: auto; }
+.ome-tabs { min-height: 42px; display: flex; align-items: end; border-bottom: 1px solid var(--ome-border); gap: 3px; overflow-x: auto; flex: 0 0 auto; }
 .ome-tab, .ome-tab-add { flex: 0 0 auto; height: 34px; border: 0; border-radius: 7px 7px 0 0; background: transparent !important; box-shadow: none !important; color: var(--text-muted); padding: 0 11px; display: flex; align-items: center; gap: 7px; }
 .ome-tab.is-active { color: var(--text-accent); background: var(--background-modifier-hover) !important; border-bottom: 2px solid var(--ome-accent); }
 .ome-tab-remove { display: none; align-items: center; color: var(--text-muted); border-radius: 50%; }
