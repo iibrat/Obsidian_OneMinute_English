@@ -44,6 +44,7 @@
 .ome-stat-card { min-height: 74px; padding: 14px 16px; display: flex; align-items: center; gap: 13px; }
 .ome-stat-icon { width: 42px; height: 42px; border-radius: 10px; display: grid; place-items: center; color: var(--ome-accent); background: var(--ome-soft); }
 .ome-stat-value { font-size: 23px; line-height: 1.1; font-weight: 700; }
+.ome-stat-card.is-danger .ome-stat-value { color: var(--text-error); }
 .ome-stat-label { color: var(--text-muted); font-size: 12px; margin-top: 4px; }
 
 .ome-columns { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: start; gap: 18px; }

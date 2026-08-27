@@ -165,15 +165,16 @@ class OneMinuteEnglishView extends ItemView {
   private renderStats(root: HTMLElement): void {
     const materialFiles = this.filesInFolder(this.plugin.settings.materialFolder);
     const topicFiles = this.filesInFolder(this.plugin.settings.topicFolder);
-    const completed = this.filterByStatus(topicFiles, "completed", false).length;
+    const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+    const abandonedTopics = topicFiles.filter((file) => file.stat.mtime < sevenDaysAgo).length;
     const stats = root.createDiv({ cls: "ome-stats" });
     this.statCard(stats, "files", materialFiles.length, "素材数量");
     this.statCard(stats, "message-square-text", topicFiles.length, "话题数量");
-    this.statCard(stats, "circle-check-big", completed, "已完成话题数量");
+    this.statCard(stats, "clock-alert", abandonedTopics, "荒废话题", true);
   }
 
-  private statCard(parent: HTMLElement, iconName: string, value: number, label: string): void {
-    const card = parent.createDiv({ cls: "ome-stat-card" });
+  private statCard(parent: HTMLElement, iconName: string, value: number, label: string, danger = false): void {
+    const card = parent.createDiv({ cls: `ome-stat-card${danger ? " is-danger" : ""}` });
     const icon = card.createSpan({ cls: "ome-stat-icon" });
     setIcon(icon, iconName);
     const copy = card.createDiv();
