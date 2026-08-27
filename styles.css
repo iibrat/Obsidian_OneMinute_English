@@ -5,7 +5,7 @@
   box-sizing: border-box;
   height: 100%;
   overflow: auto;
-  padding: 14px;
+  padding: 14px 14px calc(100px + env(safe-area-inset-bottom, 0px));
   color: var(--text-normal);
 }
 
@@ -46,10 +46,10 @@
 .ome-stat-value { font-size: 23px; line-height: 1.1; font-weight: 700; }
 .ome-stat-label { color: var(--text-muted); font-size: 12px; margin-top: 4px; }
 
-.ome-columns { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 18px; min-height: 590px; }
-.ome-panel { min-width: 0; display: flex; flex-direction: column; overflow: hidden; }
+.ome-columns { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: start; gap: 18px; }
+.ome-panel { min-width: 0; display: flex; flex-direction: column; overflow: visible; }
 .ome-material-panel { padding: 18px; }
-.ome-material-panel .ome-panel-body { flex: 1; padding-top: 12px; overflow: hidden; display: flex; flex-direction: column; }
+.ome-material-panel .ome-panel-body { padding-top: 12px; overflow: visible; display: flex; flex-direction: column; }
 
 .ome-tabs { min-height: 42px; display: flex; align-items: end; border-bottom: 1px solid var(--ome-border); gap: 3px; overflow-x: auto; flex: 0 0 auto; }
 .ome-tab, .ome-tab-add { flex: 0 0 auto; height: 34px; border: 0; border-radius: 7px 7px 0 0; background: transparent !important; box-shadow: none !important; color: var(--text-muted); padding: 0 11px; display: flex; align-items: center; gap: 7px; }
@@ -74,7 +74,7 @@
 .ome-status-completed.is-active { background: color-mix(in srgb, #67c23a 20%, transparent); }
 .ome-status-published.is-active { background: color-mix(in srgb, #409eff 20%, transparent); }
 
-.ome-file-list { flex: 1; overflow: auto; padding-top: 10px; }
+.ome-file-list { overflow: visible; padding-top: 10px; }
 .ome-file-row { min-height: 64px; margin-bottom: 8px; border: 1px solid var(--ome-border); border-radius: 10px; padding: 9px 10px; display: flex; align-items: center; gap: 11px; cursor: pointer; transition: background 120ms ease, border-color 120ms ease; }
 .ome-file-row:hover { background: var(--background-modifier-hover); border-color: var(--background-modifier-border-hover); }
 .ome-file-icon { flex: 0 0 auto; width: 34px; height: 34px; display: grid; place-items: center; border-radius: 7px; background: var(--background-modifier-hover); color: var(--text-muted); }
@@ -91,11 +91,10 @@
 
 @media (max-width: 900px) {
   .ome-columns { grid-template-columns: 1fr; }
-  .ome-panel { min-height: 480px; }
 }
 
 @media (max-width: 620px) {
-  .ome-page { padding: 9px; }
+  .ome-page { padding: 9px 9px calc(100px + env(safe-area-inset-bottom, 0px)); }
   .ome-header { align-items: stretch; flex-wrap: wrap; }
   .ome-search { order: 3; width: 100%; }
   .ome-stats { grid-template-columns: 1fr; gap: 9px; }
