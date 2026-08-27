@@ -132,6 +132,7 @@ class OneMinuteEnglishView extends ItemView {
     const columns = root.createDiv({ cls: "ome-columns" });
     this.renderMaterials(columns.createDiv({ cls: "ome-panel ome-material-panel" }));
     this.renderTopics(columns.createDiv({ cls: "ome-panel ome-topic-panel" }));
+    root.createDiv({ cls: "ome-bottom-spacer", attr: { "aria-hidden": "true" } });
   }
 
   private renderHeader(root: HTMLElement): void {
