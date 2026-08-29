@@ -357,7 +357,7 @@ class OneMinuteEnglishView extends ItemView {
     const tags = heading.createDiv({ cls: "ome-status-tags" });
     const allButton = tags.createEl("button", {
       cls: `ome-status-tag${this.activeStatus === null ? " is-active" : ""}`,
-      text: "全部",
+      text: "未编辑",
     });
     allButton.addEventListener("click", () => {
       this.activeStatus = null;
@@ -368,7 +368,9 @@ class OneMinuteEnglishView extends ItemView {
     this.statusButton(tags, "published", "已发布");
 
     let files = this.filesInFolder(this.plugin.settings.topicFolder);
-    if (this.activeStatus) files = this.filterByStatus(files, this.activeStatus, true);
+    files = this.activeStatus
+      ? this.filterByStatus(files, this.activeStatus, true)
+      : this.filterUnedited(files);
     files = this.searchFiles(files);
     title.createSpan({ cls: "ome-count", text: String(files.length) });
     this.renderFileList(panel, files, "没有符合条件的话题");
@@ -447,6 +449,22 @@ class OneMinuteEnglishView extends ItemView {
       const value: unknown = this.app.metadataCache.getFileCache(file)?.frontmatter?.[property];
       if (Array.isArray(value)) return value.some((item) => String(item).toLocaleLowerCase() === expected);
       return value !== undefined && String(value).toLocaleLowerCase() === expected;
+    });
+  }
+
+  private filterUnedited(files: TFile[]): TFile[] {
+    const property = this.plugin.settings.statusProperty.trim() || "状态";
+    return files.filter((file) => {
+      const value: unknown = this.app.metadataCache.getFileCache(file)?.frontmatter?.[property];
+      if (value === undefined || value === null) return true;
+      if (Array.isArray(value)) {
+        return value.length === 0 || value.some((item) => {
+          const normalized = String(item ?? "").trim().toLocaleLowerCase();
+          return normalized === "" || normalized === "未处理";
+        });
+      }
+      const normalized = String(value).trim().toLocaleLowerCase();
+      return normalized === "" || normalized === "未处理";
     });
   }
 
