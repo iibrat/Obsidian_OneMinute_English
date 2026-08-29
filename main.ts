@@ -25,6 +25,7 @@ interface FolderTab {
 }
 
 interface OneMinuteEnglishSettings {
+  openAsStartupPage: boolean;
   materialFolder: string;
   topicFolder: string;
   statusProperty: string;
@@ -37,6 +38,7 @@ interface OneMinuteEnglishSettings {
 }
 
 const DEFAULT_SETTINGS: OneMinuteEnglishSettings = {
+  openAsStartupPage: false,
   materialFolder: "",
   topicFolder: "",
   statusProperty: "",
@@ -123,6 +125,7 @@ class QuickCaptureModal extends Modal {
 
 export default class OneMinuteEnglishPlugin extends Plugin {
   settings: OneMinuteEnglishSettings = DEFAULT_SETTINGS;
+  private isOpeningStartupPage = false;
 
   async onload(): Promise<void> {
     await this.loadSettings();
@@ -130,6 +133,10 @@ export default class OneMinuteEnglishPlugin extends Plugin {
     this.addRibbonIcon("languages", "打开 One Minute English", () => void this.activateView());
     this.addCommand({ id: "open-one-minute-english", name: "打开主页", callback: () => void this.activateView() });
     this.addSettingTab(new OneMinuteEnglishSettingTab(this.app, this));
+    this.app.workspace.onLayoutReady(() => {
+      if (this.settings.openAsStartupPage) void this.activateView();
+    });
+    this.registerEvent(this.app.workspace.on("layout-change", () => void this.openInEmptyLeaf()));
   }
 
   async activateView(): Promise<void> {
@@ -139,6 +146,22 @@ export default class OneMinuteEnglishPlugin extends Plugin {
       await leaf.setViewState({ type: VIEW_TYPE, active: true });
     }
     await this.app.workspace.revealLeaf(leaf);
+  }
+
+  private async openInEmptyLeaf(): Promise<void> {
+    if (!this.settings.openAsStartupPage || this.isOpeningStartupPage) return;
+    if (this.app.workspace.getLeavesOfType(VIEW_TYPE).length > 0) return;
+
+    const emptyLeaf = this.app.workspace.getLeavesOfType("empty")[0];
+    if (!emptyLeaf) return;
+
+    this.isOpeningStartupPage = true;
+    try {
+      await emptyLeaf.setViewState({ type: VIEW_TYPE, active: true });
+      await this.app.workspace.revealLeaf(emptyLeaf);
+    } finally {
+      this.isOpeningStartupPage = false;
+    }
   }
 
   async loadSettings(): Promise<void> {
@@ -488,6 +511,14 @@ class OneMinuteEnglishSettingTab extends PluginSettingTab {
     const { containerEl } = this;
     containerEl.empty();
     containerEl.createEl("h2", { text: "One Minute English 设置" });
+    new Setting(containerEl)
+      .setName("设为启动页面")
+      .setDesc("Obsidian 启动或所有标签页关闭后，自动显示 One Minute English 主页。")
+      .addToggle((toggle) => toggle.setValue(this.plugin.settings.openAsStartupPage).onChange(async (value) => {
+        this.plugin.settings.openAsStartupPage = value;
+        await this.plugin.saveSettings();
+        if (value) await this.plugin.activateView();
+      }));
     containerEl.createEl("p", { cls: "setting-item-description", text: "目录路径均相对于当前 Obsidian 库；列表会自动包含所有子目录中的 Markdown 文档。" });
     this.folderSetting("素材目录", "主页“素材”标签加载的目录。", "materialFolder");
     this.folderSetting("话题目录", "右侧“话题列表”加载的目录。", "topicFolder");
