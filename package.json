@@ -1,6 +1,6 @@
 {
   "name": "obsidian-one-minute-english",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "A focused One Minute English dashboard for Obsidian.",
   "main": "main.js",
   "scripts": {
@@ -8,7 +8,11 @@
     "build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
     "version:set": "node scripts/set-version.mjs"
   },
-  "keywords": ["obsidian", "english", "dashboard"],
+  "keywords": [
+    "obsidian",
+    "english",
+    "dashboard"
+  ],
   "author": "One Minute English",
   "license": "MIT",
   "devDependencies": {
