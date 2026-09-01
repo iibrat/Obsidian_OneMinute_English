@@ -1,7 +1,10 @@
 import {
   App,
+  Editor,
   FuzzySuggestModal,
   ItemView,
+  MarkdownFileInfo,
+  MarkdownView,
   Modal,
   Notice,
   Plugin,
@@ -16,7 +19,17 @@ import {
 } from "obsidian";
 
 const VIEW_TYPE = "one-minute-english-view";
+const HIGHLIGHTS_VIEW_TYPE = "one-minute-english-highlights-view";
+const HIGHLIGHTS_LIBRARY_VIEW_TYPE = "one-minute-english-highlights-library-view";
 type TopicStatus = "editing" | "completed" | "published";
+
+interface HighlightNote {
+  id: string;
+  text: string;
+  note: string;
+  sourcePath: string;
+  createdAt: number;
+}
 
 interface FolderTab {
   id: string;
@@ -35,6 +48,7 @@ interface OneMinuteEnglishSettings {
   quickCaptureFolder: string;
   quickCaptureFilenameFormat: string;
   customTabs: FolderTab[];
+  highlights: HighlightNote[];
 }
 
 const DEFAULT_SETTINGS: OneMinuteEnglishSettings = {
@@ -48,6 +62,7 @@ const DEFAULT_SETTINGS: OneMinuteEnglishSettings = {
   quickCaptureFolder: "",
   quickCaptureFilenameFormat: "",
   customTabs: [],
+  highlights: [],
 };
 
 class FolderSuggestModal extends FuzzySuggestModal<TFolder> {
@@ -123,20 +138,135 @@ class QuickCaptureModal extends Modal {
   }
 }
 
+class HighlightToNoteModal extends Modal {
+  private noteName: string;
+
+  constructor(
+    app: App,
+    defaultName: string,
+    private readonly onSave: (name: string) => Promise<boolean>,
+  ) {
+    super(app);
+    this.noteName = defaultName;
+  }
+
+  onOpen(): void {
+    const { contentEl } = this;
+    contentEl.addClass("ome-highlight-note-modal");
+    contentEl.createEl("h2", { text: "将高亮转为笔记" });
+    contentEl.createEl("p", { cls: "ome-capture-description", text: "设置笔记名称，笔记将保存到“话题目录”。" });
+    const input = contentEl.createEl("input", {
+      type: "text",
+      value: this.noteName,
+      attr: { placeholder: "输入笔记名称", "aria-label": "笔记名称" },
+    });
+    input.addEventListener("input", () => { this.noteName = input.value; });
+    input.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        void this.save();
+      }
+    });
+
+    const actions = contentEl.createDiv({ cls: "ome-capture-actions" });
+    const cancel = actions.createEl("button", { text: "取消" });
+    cancel.addEventListener("click", () => this.close());
+    const save = actions.createEl("button", { cls: "mod-cta", text: "保存" });
+    save.addEventListener("click", () => void this.save());
+    window.setTimeout(() => {
+      input.focus();
+      input.select();
+    }, 0);
+  }
+
+  onClose(): void {
+    this.contentEl.empty();
+  }
+
+  private async save(): Promise<void> {
+    if (!this.noteName.trim()) {
+      new Notice("请输入笔记名称");
+      return;
+    }
+    if (await this.onSave(this.noteName)) this.close();
+  }
+}
+
+class DeleteHighlightModal extends Modal {
+  constructor(
+    app: App,
+    private readonly highlight: HighlightNote,
+    private readonly onConfirm: () => Promise<void>,
+  ) {
+    super(app);
+  }
+
+  onOpen(): void {
+    const { contentEl } = this;
+    contentEl.addClass("ome-delete-highlight-modal");
+    contentEl.createEl("h2", { text: "删除高亮？" });
+    contentEl.createEl("p", { text: "右侧高亮卡片和补充内容将被删除，原笔记中的文字会保留并取消高亮。" });
+    contentEl.createDiv({ cls: "ome-delete-highlight-preview", text: this.highlight.text });
+    const actions = contentEl.createDiv({ cls: "ome-capture-actions" });
+    const cancel = actions.createEl("button", { text: "取消" });
+    cancel.addEventListener("click", () => this.close());
+    const confirm = actions.createEl("button", { cls: "mod-warning", text: "删除" });
+    confirm.addEventListener("click", () => void this.confirm());
+  }
+
+  onClose(): void {
+    this.contentEl.empty();
+  }
+
+  private async confirm(): Promise<void> {
+    await this.onConfirm();
+    this.close();
+  }
+}
+
 export default class OneMinuteEnglishPlugin extends Plugin {
   settings: OneMinuteEnglishSettings = DEFAULT_SETTINGS;
   private isOpeningStartupPage = false;
+  private selectionButton: HTMLButtonElement | null = null;
 
   async onload(): Promise<void> {
     await this.loadSettings();
     this.registerView(VIEW_TYPE, (leaf) => new OneMinuteEnglishView(leaf, this));
+    this.registerView(HIGHLIGHTS_VIEW_TYPE, (leaf) => new HighlightsView(leaf, this));
+    this.registerView(HIGHLIGHTS_LIBRARY_VIEW_TYPE, (leaf) => new HighlightsLibraryView(leaf, this));
     this.addRibbonIcon("languages", "打开 One Minute English", () => void this.activateView());
+    this.addRibbonIcon("highlighter", "打开高亮侧栏", () => void this.activateHighlightsView());
     this.addCommand({ id: "open-one-minute-english", name: "打开主页", callback: () => void this.activateView() });
+    this.addCommand({
+      id: "highlight-selected-text",
+      name: "将选中内容加入高亮",
+      editorCheckCallback: (checking, editor, view) => {
+        const hasSelection = Boolean(editor.getSelection().trim());
+        if (!checking && hasSelection) void this.createHighlight(editor, view);
+        return hasSelection;
+      },
+    });
+    this.addCommand({ id: "open-highlights-sidebar", name: "打开高亮侧栏", callback: () => void this.activateHighlightsView() });
+    this.addCommand({ id: "open-highlights-library", name: "打开高亮总览", callback: () => void this.activateHighlightsLibraryView() });
+    this.registerDomEvent(document, "mouseup", (event) => {
+      if (this.selectionButton?.contains(event.target as Node)) return;
+      window.setTimeout(() => this.updateSelectionButton(), 0);
+    });
+    this.registerDomEvent(document, "keyup", () => window.setTimeout(() => this.updateSelectionButton(), 0));
+    this.registerDomEvent(document, "mousedown", (event) => {
+      if (!this.selectionButton?.contains(event.target as Node)) this.hideSelectionButton();
+    });
+    this.registerEvent(this.app.workspace.on("active-leaf-change", () => this.hideSelectionButton()));
+    this.registerEvent(this.app.vault.on("rename", (file, oldPath) => void this.updateHighlightPaths(file.path, oldPath)));
     this.addSettingTab(new OneMinuteEnglishSettingTab(this.app, this));
     this.app.workspace.onLayoutReady(() => {
       if (this.settings.openAsStartupPage) void this.activateView();
     });
     this.registerEvent(this.app.workspace.on("layout-change", () => void this.openInEmptyLeaf()));
+  }
+
+  onunload(): void {
+    this.hideSelectionButton();
   }
 
   async activateView(): Promise<void> {
@@ -146,6 +276,176 @@ export default class OneMinuteEnglishPlugin extends Plugin {
       await leaf.setViewState({ type: VIEW_TYPE, active: true });
     }
     await this.app.workspace.revealLeaf(leaf);
+  }
+
+  async activateHighlightsView(): Promise<void> {
+    let leaf: WorkspaceLeaf | null = this.app.workspace.getLeavesOfType(HIGHLIGHTS_VIEW_TYPE)[0] ?? null;
+    if (!leaf) {
+      leaf = this.app.workspace.getRightLeaf(false);
+      if (!leaf) {
+        new Notice("无法打开右侧高亮栏");
+        return;
+      }
+      await leaf.setViewState({ type: HIGHLIGHTS_VIEW_TYPE, active: true });
+    }
+    await this.app.workspace.revealLeaf(leaf);
+  }
+
+  async activateHighlightsLibraryView(): Promise<void> {
+    let leaf = this.app.workspace.getLeavesOfType(HIGHLIGHTS_LIBRARY_VIEW_TYPE)[0];
+    if (!leaf) {
+      leaf = this.app.workspace.getLeaf("tab");
+      await leaf.setViewState({ type: HIGHLIGHTS_LIBRARY_VIEW_TYPE, active: true });
+    }
+    await this.app.workspace.revealLeaf(leaf);
+  }
+
+  private async createHighlight(editor: Editor, view: MarkdownView | MarkdownFileInfo): Promise<void> {
+    const selection = editor.getSelection();
+    this.hideSelectionButton();
+    if (!selection.trim()) {
+      new Notice("请先选中要高亮的内容");
+      return;
+    }
+    if (!view.file) {
+      new Notice("当前编辑器没有对应的笔记文件");
+      return;
+    }
+    if (/<mark\b[^>]*data-ome-highlight-id=/i.test(selection)) {
+      new Notice("选中内容里已经包含高亮");
+      return;
+    }
+
+    const id = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+    editor.replaceSelection(`<mark class="ome-note-highlight" data-ome-highlight-id="${id}">${selection}</mark>`);
+    this.settings.highlights.unshift({
+      id,
+      text: selection,
+      note: "",
+      sourcePath: view.file.path,
+      createdAt: Date.now(),
+    });
+    await this.saveSettings();
+    await this.activateHighlightsView();
+    new Notice("已加入高亮");
+  }
+
+  async convertHighlightToNote(highlight: HighlightNote): Promise<void> {
+    const folder = this.settings.topicFolder.replace(/^\/+|\/+$/g, "");
+    if (!folder) {
+      new Notice("请先在 One Minute English 设置中配置“话题目录”");
+      return;
+    }
+    const targetFolder = this.app.vault.getAbstractFileByPath(folder);
+    if (!(targetFolder instanceof TFolder)) {
+      new Notice("配置的“话题目录”不存在，请重新设置");
+      return;
+    }
+    new HighlightToNoteModal(
+      this.app,
+      String(Date.now()),
+      (name) => this.saveHighlightAsNote(highlight, folder, name),
+    ).open();
+  }
+
+  requestDeleteHighlight(highlight: HighlightNote): void {
+    new DeleteHighlightModal(this.app, highlight, () => this.deleteHighlight(highlight)).open();
+  }
+
+  private async deleteHighlight(highlight: HighlightNote): Promise<void> {
+    const source = this.app.vault.getAbstractFileByPath(highlight.sourcePath);
+    if (source instanceof TFile) {
+      const openingTag = `<mark class="ome-note-highlight" data-ome-highlight-id="${highlight.id}">`;
+      await this.app.vault.process(source, (content) => {
+        const start = content.indexOf(openingTag);
+        if (start < 0) return content;
+        const textStart = start + openingTag.length;
+        const end = content.indexOf("</mark>", textStart);
+        if (end < 0) return content;
+        return `${content.slice(0, start)}${content.slice(textStart, end)}${content.slice(end + "</mark>".length)}`;
+      });
+    }
+    this.settings.highlights = this.settings.highlights.filter((item) => item.id !== highlight.id);
+    await this.saveSettings();
+    new Notice("已删除高亮，原文字内容已保留");
+  }
+
+  private async saveHighlightAsNote(highlight: HighlightNote, folder: string, name: string): Promise<boolean> {
+    const safeName = name.replace(/\.md$/i, "").replace(/[\\/:*?"<>|]/g, "-").trim();
+    if (!safeName) {
+      new Notice("请输入有效的笔记名称");
+      return false;
+    }
+    const path = normalizePath(`${folder}/${safeName}.md`);
+    if (this.app.vault.getAbstractFileByPath(path)) {
+      new Notice("同名笔记已经存在，请修改名称");
+      return false;
+    }
+    const note = highlight.note.trim();
+    const content = note ? `${highlight.text}\n\n## 补充内容\n\n${note}` : highlight.text;
+    const file = await this.app.vault.create(path, content);
+    new Notice(`已生成笔记：${file.basename}`);
+    await this.app.workspace.getLeaf(false).openFile(file);
+    return true;
+  }
+
+  private updateSelectionButton(): void {
+    const markdownView = this.app.workspace.getActiveViewOfType(MarkdownView);
+    const selection = window.getSelection();
+    const anchor = selection?.anchorNode instanceof Element
+      ? selection.anchorNode
+      : selection?.anchorNode?.parentElement;
+    if (!markdownView || !selection || selection.isCollapsed || !anchor || !anchor.closest(".markdown-source-view")) {
+      this.hideSelectionButton();
+      return;
+    }
+    if (!markdownView.containerEl.contains(anchor) || !markdownView.editor.getSelection().trim()) {
+      this.hideSelectionButton();
+      return;
+    }
+
+    const range = selection.getRangeAt(0);
+    const rect = range.getBoundingClientRect();
+    if (!rect.width && !rect.height) {
+      this.hideSelectionButton();
+      return;
+    }
+
+    const button = this.selectionButton ?? this.createSelectionButton();
+    button.style.visibility = "hidden";
+    button.style.display = "flex";
+    const width = button.offsetWidth;
+    const left = Math.min(window.innerWidth - width - 8, Math.max(8, rect.left + rect.width / 2 - width / 2));
+    button.style.left = `${left}px`;
+    button.style.top = `${Math.max(8, rect.top - button.offsetHeight - 8)}px`;
+    button.style.visibility = "visible";
+  }
+
+  private createSelectionButton(): HTMLButtonElement {
+    const button = document.body.createEl("button", { cls: "ome-selection-highlight-button", text: "加入高亮" });
+    button.addEventListener("mousedown", (event) => event.preventDefault());
+    button.addEventListener("click", () => {
+      const markdownView = this.app.workspace.getActiveViewOfType(MarkdownView);
+      if (markdownView) void this.createHighlight(markdownView.editor, markdownView);
+    });
+    this.selectionButton = button;
+    return button;
+  }
+
+  private hideSelectionButton(): void {
+    this.selectionButton?.remove();
+    this.selectionButton = null;
+  }
+
+  private async updateHighlightPaths(newPath: string, oldPath: string): Promise<void> {
+    let changed = false;
+    this.settings.highlights.forEach((highlight) => {
+      if (highlight.sourcePath === oldPath || highlight.sourcePath.startsWith(`${oldPath}/`)) {
+        highlight.sourcePath = `${newPath}${highlight.sourcePath.slice(oldPath.length)}`;
+        changed = true;
+      }
+    });
+    if (changed) await this.saveSettings();
   }
 
   private async openInEmptyLeaf(): Promise<void> {
@@ -166,6 +466,7 @@ export default class OneMinuteEnglishPlugin extends Plugin {
 
   async loadSettings(): Promise<void> {
     this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+    if (!Array.isArray(this.settings.highlights)) this.settings.highlights = [];
   }
 
   async saveSettings(): Promise<void> {
@@ -174,6 +475,206 @@ export default class OneMinuteEnglishPlugin extends Plugin {
       const view = leaf.view;
       if (view instanceof OneMinuteEnglishView) view.render();
     });
+    this.app.workspace.getLeavesOfType(HIGHLIGHTS_VIEW_TYPE).forEach((leaf) => {
+      const view = leaf.view;
+      if (view instanceof HighlightsView) view.render();
+    });
+    this.app.workspace.getLeavesOfType(HIGHLIGHTS_LIBRARY_VIEW_TYPE).forEach((leaf) => {
+      const view = leaf.view;
+      if (view instanceof HighlightsLibraryView) view.render();
+    });
+  }
+}
+
+class HighlightsView extends ItemView {
+  constructor(leaf: WorkspaceLeaf, protected readonly plugin: OneMinuteEnglishPlugin) {
+    super(leaf);
+  }
+
+  getViewType(): string { return HIGHLIGHTS_VIEW_TYPE; }
+  getDisplayText(): string { return "高亮"; }
+  getIcon(): string { return "highlighter"; }
+
+  async onOpen(): Promise<void> {
+    this.registerEvent(this.app.workspace.on("file-open", () => this.render()));
+    this.render();
+  }
+
+  render(): void {
+    const root = this.contentEl;
+    root.empty();
+    root.addClass("ome-highlights-view");
+
+    const activeFile = this.app.workspace.getActiveFile();
+    const highlights = activeFile
+      ? this.plugin.settings.highlights.filter((highlight) => highlight.sourcePath === activeFile.path)
+      : [];
+
+    const heading = root.createDiv({ cls: "ome-highlights-heading" });
+    const title = heading.createDiv({ cls: "ome-highlights-title" });
+    const icon = title.createSpan();
+    setIcon(icon, "highlighter");
+    title.createEl("h2", { text: "高亮" });
+    title.createSpan({ cls: "ome-count", text: String(highlights.length) });
+    const openLibrary = heading.createEl("button", {
+      cls: "ome-open-highlights-library",
+      attr: { "aria-label": "打开高亮总览", title: "打开高亮总览" },
+    });
+    setIcon(openLibrary, "library");
+    openLibrary.addEventListener("click", () => void this.plugin.activateHighlightsLibraryView());
+    root.createDiv({ cls: "ome-highlights-hint", text: "在笔记中选中文字，点击选区上方的“加入高亮”。" });
+
+    const list = root.createDiv({ cls: "ome-highlight-list" });
+    highlights.forEach((highlight) => this.renderHighlight(list, highlight));
+  }
+
+  protected renderHighlight(parent: HTMLElement, highlight: HighlightNote): void {
+    const card = parent.createDiv({ cls: "ome-highlight-card" });
+    const head = card.createDiv({ cls: "ome-highlight-card-head" });
+    head.createDiv({ cls: "ome-highlight-text", text: highlight.text });
+    const actions = head.createDiv({ cls: "ome-highlight-card-actions" });
+    const createNote = actions.createEl("button", {
+      cls: "ome-highlight-create-note",
+      attr: { "aria-label": "将高亮转为笔记", title: "将高亮转为笔记" },
+    });
+    setIcon(createNote, "file-plus-2");
+    createNote.addEventListener("click", () => void this.plugin.convertHighlightToNote(highlight));
+    const remove = actions.createEl("button", {
+      cls: "ome-highlight-delete",
+      attr: { "aria-label": "删除高亮", title: "删除高亮" },
+    });
+    setIcon(remove, "trash-2");
+    remove.addEventListener("click", () => this.plugin.requestDeleteHighlight(highlight));
+
+    const source = card.createEl("button", {
+      cls: "ome-highlight-source",
+      text: highlight.sourcePath,
+      attr: { title: "打开原笔记" },
+    });
+    source.addEventListener("click", () => void this.openSource(highlight));
+
+    const label = card.createEl("label", { cls: "ome-highlight-note-label", text: "补充内容" });
+    const textarea = card.createEl("textarea", {
+      cls: "ome-highlight-note",
+      text: highlight.note,
+      attr: { placeholder: "添加自己的理解、例句或备注…", "aria-label": `编辑 ${highlight.text} 的补充内容` },
+    });
+    label.htmlFor = textarea.id = `ome-highlight-note-${highlight.id}`;
+    textarea.value = highlight.note;
+    textarea.addEventListener("input", () => { highlight.note = textarea.value; });
+    textarea.addEventListener("blur", () => void this.plugin.saveSettings());
+    textarea.addEventListener("keydown", (event) => {
+      if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
+        event.preventDefault();
+        textarea.blur();
+      }
+    });
+  }
+
+  protected async openSource(highlight: HighlightNote): Promise<void> {
+    const file = this.app.vault.getAbstractFileByPath(highlight.sourcePath);
+    if (!(file instanceof TFile)) {
+      new Notice("找不到原笔记");
+      return;
+    }
+    await this.app.workspace.getLeaf(false).openFile(file);
+    const markdownView = this.app.workspace.getActiveViewOfType(MarkdownView);
+    if (!markdownView) return;
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      const renderedHighlight = markdownView.containerEl.querySelector<HTMLElement>(
+        `.ome-note-highlight[data-ome-highlight-id="${highlight.id}"]`,
+      );
+      if (renderedHighlight) {
+        renderedHighlight.scrollIntoView({ behavior: "smooth", block: "center" });
+        return;
+      }
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 50));
+    }
+
+    // 编辑器可能尚未渲染远离视口的内容；只滚动，不设置光标，避免展开 <mark> 源码。
+    const marker = `data-ome-highlight-id="${highlight.id}"`;
+    const offset = markdownView.editor.getValue().indexOf(marker);
+    if (offset < 0) return;
+    const position = markdownView.editor.offsetToPos(offset);
+    markdownView.editor.scrollIntoView({ from: position, to: position }, true);
+  }
+}
+
+class HighlightsLibraryView extends HighlightsView {
+  private selectedPath = "";
+
+  getViewType(): string { return HIGHLIGHTS_LIBRARY_VIEW_TYPE; }
+  getDisplayText(): string { return "高亮总览"; }
+  getIcon(): string { return "library"; }
+
+  async onOpen(): Promise<void> {
+    const activeFile = this.app.workspace.getActiveFile();
+    this.selectedPath = activeFile?.path ?? "";
+    this.render();
+  }
+
+  render(): void {
+    const root = this.contentEl;
+    root.empty();
+    root.addClass("ome-highlights-library");
+
+    const summaries = Array.from(this.plugin.settings.highlights.reduce((items, highlight) => {
+      const current = items.get(highlight.sourcePath);
+      if (current) {
+        current.count += 1;
+        current.latest = Math.max(current.latest, highlight.createdAt);
+      } else {
+        items.set(highlight.sourcePath, { path: highlight.sourcePath, count: 1, latest: highlight.createdAt });
+      }
+      return items;
+    }, new Map<string, { path: string; count: number; latest: number }>()).values())
+      .sort((a, b) => b.latest - a.latest);
+
+    if (!summaries.some((summary) => summary.path === this.selectedPath)) {
+      this.selectedPath = summaries[0]?.path ?? "";
+    }
+
+    const header = root.createDiv({ cls: "ome-highlights-library-header" });
+    const headerIcon = header.createSpan();
+    setIcon(headerIcon, "library");
+    header.createEl("h2", { text: "高亮总览" });
+    header.createSpan({ cls: "ome-count", text: String(this.plugin.settings.highlights.length) });
+
+    const columns = root.createDiv({ cls: "ome-highlights-library-columns" });
+    const notes = columns.createDiv({ cls: "ome-highlight-note-list" });
+    const cards = columns.createDiv({ cls: "ome-highlight-library-cards" });
+
+    if (!summaries.length) {
+      notes.createDiv({ cls: "ome-highlight-library-empty", text: "还没有包含高亮的笔记" });
+      return;
+    }
+
+    summaries.forEach((summary) => {
+      const button = notes.createEl("button", {
+        cls: `ome-highlight-note-item${summary.path === this.selectedPath ? " is-active" : ""}`,
+        attr: { title: summary.path },
+      });
+      const name = summary.path.split("/").pop()?.replace(/\.md$/i, "") ?? summary.path;
+      button.createSpan({ cls: "ome-highlight-note-name", text: name });
+      button.createSpan({ cls: "ome-count", text: String(summary.count) });
+      if (summary.path.includes("/")) {
+        button.createSpan({ cls: "ome-highlight-note-path", text: summary.path.slice(0, summary.path.lastIndexOf("/")) });
+      }
+      button.addEventListener("click", () => {
+        this.selectedPath = summary.path;
+        this.render();
+      });
+    });
+
+    const selectedHighlights = this.plugin.settings.highlights.filter(
+      (highlight) => highlight.sourcePath === this.selectedPath,
+    );
+    const selectedName = this.selectedPath.split("/").pop()?.replace(/\.md$/i, "") ?? this.selectedPath;
+    const cardsHeader = cards.createDiv({ cls: "ome-highlight-library-cards-header" });
+    cardsHeader.createEl("h3", { text: selectedName });
+    cardsHeader.createSpan({ cls: "ome-count", text: String(selectedHighlights.length) });
+    const list = cards.createDiv({ cls: "ome-highlight-list" });
+    selectedHighlights.forEach((highlight) => this.renderHighlight(list, highlight));
   }
 }
 
