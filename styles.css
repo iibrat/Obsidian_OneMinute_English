@@ -146,15 +146,15 @@
   min-height: 30px;
   padding: 4px 11px;
   align-items: center;
-  border: 1px solid var(--background-modifier-border-hover);
+  border: 1px solid #e5b91f;
   border-radius: 7px;
-  color: var(--text-on-accent);
-  background: var(--interactive-accent) !important;
+  color: #fff !important;
+  background: #e5bd24 !important;
   box-shadow: 0 5px 16px rgb(0 0 0 / 25%) !important;
   font-size: 12px;
   cursor: pointer;
 }
-.ome-selection-highlight-button:hover { background: var(--interactive-accent-hover) !important; }
+.ome-selection-highlight-button:hover { background: #d4aa16 !important; }
 
 mark.ome-note-highlight {
   padding: 0 0.08em;
