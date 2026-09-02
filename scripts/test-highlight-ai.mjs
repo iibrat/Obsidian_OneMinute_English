@@ -129,6 +129,8 @@ test("菜单包含设置中的提示词，选择后携带当前编辑器原文�
   assert.match(ctx.created[0].content, /## 高亮内容\n\nHighlighted passage\n\n## 补充内容\n\nLatest supplement/);
   assert.match(ctx.created[0].content, /## 来源笔记\n\n\[\[source\]\]/);
   assert.match(ctx.created[0].content, /"状态": \[\]/);
+  assert.equal(ctx.highlight.note, "");
+  assert.equal(ctx.plugin.saved.highlights[0].note, "");
   assert.equal(ctx.highlight.aiResult, undefined);
   assert.equal(ctx.highlight.aiResults, undefined);
 });
@@ -154,6 +156,8 @@ test("其他笔记处于活动状态时仍读取高亮自己的原文；重复�
   assert.match(ctx.created[0].content, /## 高亮内容\n\nHighlighted passage\n\n## 补充内容\n\nLatest supplement/);
   assert.equal(ctx.created[0].content.includes("Edited after submission"), false);
   assert.equal(ctx.created[0].content.includes("A later supplement"), false);
+  assert.equal(ctx.highlight.note, "A later supplement");
+  assert.equal(ctx.plugin.saved.highlights[0].note, "A later supplement");
 });
 
 test("无原文或空提示词不请求 API；接口失败保留上次结果且可再次提交", async () => {
@@ -170,6 +174,7 @@ test("无原文或空提示词不请求 API；接口失败保留上次结果且�
   await ctx.plugin.generateHighlightAI(ctx.highlight, ctx.prompt);
   assert.equal(ctx.highlight.aiResult.content, "Previous result");
   assert.equal(ctx.plugin.pendingAI.size, 0);
+  assert.equal(ctx.highlight.note, "Latest supplement");
   assert.equal(ctx.plugin.isHighlightAIPending(ctx.highlight.id), false);
   ctx.respond(async () => noteResponse("Retried result"));
   await ctx.plugin.generateHighlightAI(ctx.highlight, ctx.prompt);
@@ -189,7 +194,9 @@ test("连续生成创建独立话题笔记，卡片仅保存链接并保留旧�
   assert.equal(ctx.highlight.aiResult.content, "Legacy result");
   assert.equal(ctx.highlight.aiResults, undefined);
   assert.equal(ctx.highlight.text, "Highlighted passage");
-  assert.equal(ctx.highlight.note, "Latest supplement");
+  assert.equal(ctx.highlight.note, "");
+  assert.equal(JSON.parse(JSON.parse(ctx.requests[1].body).messages[1].content)["我的补充内容"], "");
+  assert.match(ctx.created[1].content, /## 补充内容\n\n（未填写）/);
   ctx.respond(async () => ({ status: 500, text: "error" }));
   await ctx.plugin.generateHighlightAI(ctx.highlight, ctx.prompt);
   assert.equal(ctx.highlight.aiNotes.length, 2);
@@ -232,6 +239,17 @@ test("创建笔记失败不会保存虚假卡片链接或覆盖旧笔记", async
   assert.equal(ctx.highlight.aiNotes, undefined);
   assert.equal(ctx.plugin.pendingAI.size, 0);
   assert.equal(attempts, 1);
+  assert.equal(ctx.highlight.note, "Latest supplement");
+});
+
+test("笔记成功创建但卡片配置保存失败时保留补充内容", async () => {
+  const ctx = setup();
+  ctx.plugin.saveData = async () => { throw new Error("Write failed"); };
+  await ctx.plugin.generateHighlightAI(ctx.highlight, ctx.prompt);
+  assert.equal(ctx.created.length, 1);
+  assert.match(ctx.created[0].content, /## 补充内容\n\nLatest supplement/);
+  assert.equal(ctx.highlight.note, "Latest supplement");
+  assert.equal(ctx.plugin.isHighlightAIPending(ctx.highlight.id), false);
 });
 
 test("先保存，发生同名错误后才添加时间戳，保留原文件", async () => {

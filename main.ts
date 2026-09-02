@@ -456,9 +456,15 @@ export default class OneMinuteEnglishPlugin extends Plugin {
       const current = this.settings.highlights.find((item) => item.id === snapshot.id);
       if (current) {
         let createdNote: TFile | undefined;
+        let clearedSupplement = false;
         try {
           createdNote = await this.createAIResultNote(topicFolder, file, generated.title, generated.content, snapshot);
           current.aiNotes = [...(current.aiNotes ?? []), { path: createdNote.path, promptName: prompt.name, createdAt: Date.now() }];
+          if (current.note === snapshot.note && current.note !== "") {
+            current.note = "";
+            clearedSupplement = true;
+            this.refreshHighlightSupplement(current);
+          }
           for (const type of [HIGHLIGHTS_VIEW_TYPE, HIGHLIGHTS_LIBRARY_VIEW_TYPE]) {
             for (const leaf of this.app.workspace.getLeavesOfType(type)) {
               if (leaf.view instanceof HighlightsView) leaf.view.refreshAIResults(current);
@@ -468,6 +474,10 @@ export default class OneMinuteEnglishPlugin extends Plugin {
           modal.close();
           new Notice(`已生成话题笔记：${createdNote.basename}`);
         } catch {
+          if (clearedSupplement && current.note === "") {
+            current.note = snapshot.note;
+            this.refreshHighlightSupplement(current);
+          }
           modal.showError(createdNote
             ? `笔记已保存到 ${createdNote.path}，但卡片链接保存失败，可在话题目录中打开笔记。`
             : "正文已生成，但新笔记创建失败。请检查话题目录和原笔记是否仍存在，并先复制正文。");
@@ -486,6 +496,14 @@ export default class OneMinuteEnglishPlugin extends Plugin {
       if (timeout !== undefined) clearTimeout(timeout);
       this.pendingAI.delete(highlight.id);
       this.refreshHighlightAIState(highlight.id);
+    }
+  }
+
+  private refreshHighlightSupplement(highlight: HighlightNote): void {
+    for (const type of [HIGHLIGHTS_VIEW_TYPE, HIGHLIGHTS_LIBRARY_VIEW_TYPE]) {
+      for (const leaf of this.app.workspace.getLeavesOfType(type)) {
+        if (leaf.view instanceof HighlightsView) leaf.view.refreshSupplement(highlight);
+      }
     }
   }
 
@@ -768,6 +786,7 @@ class HighlightsView extends ItemView {
       attr: { placeholder: "添加自己的理解、例句或备注…", "aria-label": `编辑 ${highlight.text} 的补充内容` },
     });
     label.htmlFor = textarea.id = `ome-highlight-note-${highlight.id}`;
+    textarea.dataset.highlightId = highlight.id;
     textarea.value = highlight.note;
     textarea.addEventListener("input", () => { highlight.note = textarea.value; });
     textarea.addEventListener("blur", () => void this.plugin.saveSettings(false));
@@ -804,6 +823,12 @@ class HighlightsView extends ItemView {
     ai.addEventListener("click", () => {
       highlight.note = textarea.value;
       this.plugin.showHighlightAIMenu(highlight, ai);
+    });
+  }
+
+  refreshSupplement(highlight: HighlightNote): void {
+    this.contentEl.querySelectorAll<HTMLTextAreaElement>(".ome-highlight-note").forEach((textarea) => {
+      if (textarea.dataset.highlightId === highlight.id) textarea.value = highlight.note;
     });
   }
 
