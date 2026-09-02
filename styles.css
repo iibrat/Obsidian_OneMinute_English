@@ -247,6 +247,8 @@ mark.ome-note-highlight {
 .ome-highlight-create-note:hover { color: var(--text-accent); background: var(--background-modifier-hover) !important; }
 .ome-highlight-ai { color: var(--text-accent); }
 .ome-highlight-ai:hover { background: var(--background-modifier-hover) !important; }
+.ome-highlight-ai.is-loading svg { animation: ome-ai-loading-spin 1s linear infinite; transform-origin: center; }
+@keyframes ome-ai-loading-spin { to { transform: rotate(360deg); } }
 .ome-highlight-delete { margin-right: auto; }
 .ome-highlight-delete:hover { color: var(--text-error); background: var(--background-modifier-error) !important; }
 .ome-highlight-create-note svg,

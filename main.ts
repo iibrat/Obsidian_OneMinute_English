@@ -403,6 +403,18 @@ export default class OneMinuteEnglishPlugin extends Plugin {
     menu.showAtPosition({ x: rect.left, y: rect.bottom }, button.ownerDocument);
   }
 
+  isHighlightAIPending(id: string): boolean {
+    return this.pendingAI.has(id);
+  }
+
+  private refreshHighlightAIState(id: string): void {
+    for (const type of [HIGHLIGHTS_VIEW_TYPE, HIGHLIGHTS_LIBRARY_VIEW_TYPE]) {
+      for (const leaf of this.app.workspace.getLeavesOfType(type)) {
+        if (leaf.view instanceof HighlightsView) leaf.view.refreshAIState(id);
+      }
+    }
+  }
+
   private async generateHighlightAI(highlight: HighlightNote, selectedPrompt: AIPrompt): Promise<void> {
     if (this.pendingAI.has(highlight.id)) return;
     const folderPath = this.settings.topicFolder.trim().replace(/^\/+|\/+$/g, "");
@@ -418,9 +430,10 @@ export default class OneMinuteEnglishPlugin extends Plugin {
     const snapshot = { ...highlight };
     const modal = new AIResultModal(this.app, prompt.name || "AI 生成", `${provider.name} · ${provider.model}`);
     this.pendingAI.set(highlight.id, modal);
-    modal.open();
     let timeout: ReturnType<typeof setTimeout> | undefined;
     try {
+      this.refreshHighlightAIState(highlight.id);
+      modal.open();
       const file = this.app.vault.getAbstractFileByPath(snapshot.sourcePath);
       if (!(file instanceof TFile)) throw new Error("找不到这条高亮的原笔记，请检查文件是否已被删除或移动。");
       const openEditor = this.app.workspace.getLeavesOfType("markdown")
@@ -472,6 +485,7 @@ export default class OneMinuteEnglishPlugin extends Plugin {
     } finally {
       if (timeout !== undefined) clearTimeout(timeout);
       this.pendingAI.delete(highlight.id);
+      this.refreshHighlightAIState(highlight.id);
     }
   }
 
@@ -785,11 +799,27 @@ class HighlightsView extends ItemView {
       cls: "ome-highlight-ai",
       attr: { "aria-label": "选择 AI 提示词", title: "AI：选择提示词生成", "aria-haspopup": "menu" },
     });
-    setIcon(ai, "sparkles");
+    ai.dataset.highlightId = highlight.id;
+    this.updateAIButton(ai, highlight.id);
     ai.addEventListener("click", () => {
       highlight.note = textarea.value;
       this.plugin.showHighlightAIMenu(highlight, ai);
     });
+  }
+
+  refreshAIState(id: string): void {
+    this.contentEl.querySelectorAll<HTMLButtonElement>(".ome-highlight-ai").forEach((button) => {
+      if (button.dataset.highlightId === id) this.updateAIButton(button, id);
+    });
+  }
+
+  private updateAIButton(button: HTMLButtonElement, id: string): void {
+    const pending = this.plugin.isHighlightAIPending(id);
+    setIcon(button, pending ? "loader-circle" : "sparkles");
+    button.classList.toggle("is-loading", pending);
+    button.setAttribute("aria-busy", String(pending));
+    button.setAttribute("aria-label", pending ? "AI 正在生成，查看进度" : "选择 AI 提示词");
+    button.title = pending ? "AI 正在生成，点击查看进度" : "AI：选择提示词生成";
   }
 
   refreshAIResults(highlight: HighlightNote): void {

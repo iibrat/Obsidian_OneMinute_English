@@ -140,6 +140,8 @@ test("其他笔记处于活动状态时仍读取高亮自己的原文；重复�
   ctx.respond(() => new Promise((done) => { resolve = done; }));
   const pending = ctx.plugin.generateHighlightAI(ctx.highlight, ctx.prompt);
   await new Promise((done) => setImmediate(done));
+  assert.equal(ctx.plugin.isHighlightAIPending(ctx.highlight.id), true);
+  assert.equal(ctx.plugin.isHighlightAIPending("another-card"), false);
   await ctx.plugin.generateHighlightAI(ctx.highlight, ctx.prompt);
   assert.equal(ctx.requests.length, 1);
   assert.equal(ctx.reads(), 1);
@@ -148,6 +150,7 @@ test("其他笔记处于活动状态时仍读取高亮自己的原文；重复�
   ctx.highlight.note = "A later supplement";
   resolve(noteResponse("Success"));
   await pending;
+  assert.equal(ctx.plugin.isHighlightAIPending(ctx.highlight.id), false);
   assert.match(ctx.created[0].content, /## 高亮内容\n\nHighlighted passage\n\n## 补充内容\n\nLatest supplement/);
   assert.equal(ctx.created[0].content.includes("Edited after submission"), false);
   assert.equal(ctx.created[0].content.includes("A later supplement"), false);
@@ -167,6 +170,7 @@ test("无原文或空提示词不请求 API；接口失败保留上次结果且�
   await ctx.plugin.generateHighlightAI(ctx.highlight, ctx.prompt);
   assert.equal(ctx.highlight.aiResult.content, "Previous result");
   assert.equal(ctx.plugin.pendingAI.size, 0);
+  assert.equal(ctx.plugin.isHighlightAIPending(ctx.highlight.id), false);
   ctx.respond(async () => noteResponse("Retried result"));
   await ctx.plugin.generateHighlightAI(ctx.highlight, ctx.prompt);
   assert.equal(ctx.highlight.aiResult.content, "Previous result");
