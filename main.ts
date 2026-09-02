@@ -5,6 +5,7 @@ import {
   ItemView,
   MarkdownFileInfo,
   MarkdownView,
+  Menu,
   Modal,
   Notice,
   Plugin,
@@ -15,8 +16,12 @@ import {
   TFolder,
   WorkspaceLeaf,
   normalizePath,
+  requestUrl,
   setIcon,
 } from "obsidian";
+import { AIPrompt, AIResult, AISettings, buildAIRequest, buildHighlightInput, getHighlightAIResults, normalizeAISettings, parseAIResponse } from "./ai";
+import { renderAISettings } from "./ai-settings";
+import { AIResultModal } from "./ai-result-modal";
 
 const VIEW_TYPE = "one-minute-english-view";
 const HIGHLIGHTS_VIEW_TYPE = "one-minute-english-highlights-view";
@@ -40,6 +45,8 @@ interface HighlightNote {
   note: string;
   sourcePath: string;
   createdAt: number;
+  aiResult?: AIResult;
+  aiResults?: AIResult[];
 }
 
 interface FolderTab {
@@ -60,6 +67,7 @@ interface OneMinuteEnglishSettings {
   quickCaptureFilenameFormat: string;
   customTabs: FolderTab[];
   highlights: HighlightNote[];
+  ai: AISettings;
 }
 
 const DEFAULT_SETTINGS: OneMinuteEnglishSettings = {
@@ -74,6 +82,7 @@ const DEFAULT_SETTINGS: OneMinuteEnglishSettings = {
   quickCaptureFilenameFormat: "",
   customTabs: [],
   highlights: [],
+  ai: { providers: [], activeProviderId: "", prompts: [], defaultPromptId: "" },
 };
 
 class FolderSuggestModal extends FuzzySuggestModal<TFolder> {
@@ -239,6 +248,7 @@ export default class OneMinuteEnglishPlugin extends Plugin {
   settings: OneMinuteEnglishSettings = DEFAULT_SETTINGS;
   private isOpeningStartupPage = false;
   private selectionButton: HTMLButtonElement | null = null;
+  private readonly pendingAI = new Map<string, AIResultModal>();
 
   async onload(): Promise<void> {
     await this.loadSettings();
@@ -357,6 +367,92 @@ export default class OneMinuteEnglishPlugin extends Plugin {
       String(Date.now()),
       (name) => this.saveHighlightAsNote(highlight, folder, name),
     ).open();
+  }
+
+  showHighlightAIMenu(highlight: HighlightNote, button: HTMLElement): void {
+    const menu = new Menu();
+    const pending = this.pendingAI.get(highlight.id);
+    if (pending) menu.addItem((item) => item.setTitle("正在生成，查看进度…").setIcon("loader")
+      .onClick(() => pending.open()));
+    if (highlight.aiResult) menu.addItem((item) => item.setTitle("查看上次结果").setIcon("file-text").onClick(() => {
+      const result = highlight.aiResult!;
+      const modal = new AIResultModal(this.app, result.promptName, result.model);
+      modal.showResult(result.content);
+      modal.open();
+    }));
+    if (pending || highlight.aiResult) menu.addSeparator();
+    const prompts = this.settings.ai.prompts;
+    if (!prompts.length) menu.addItem((item) => item.setTitle("请先在设置 → AI 中添加提示词").setDisabled(true));
+    for (const prompt of prompts) {
+      menu.addItem((item) => item.setTitle(prompt.name || "未命名提示词")
+        .setIcon(prompt.id === this.settings.ai.defaultPromptId ? "star" : "sparkles")
+        .setDisabled(Boolean(pending))
+        .onClick(() => void this.generateHighlightAI(highlight, prompt)));
+    }
+    const rect = button.getBoundingClientRect();
+    menu.showAtPosition({ x: rect.left, y: rect.bottom }, button.ownerDocument);
+  }
+
+  private async generateHighlightAI(highlight: HighlightNote, selectedPrompt: AIPrompt): Promise<void> {
+    if (this.pendingAI.has(highlight.id)) return;
+    const configured = this.settings.ai.providers.find((provider) => provider.id === this.settings.ai.activeProviderId);
+    if (!configured) { new Notice("请先在设置 → AI 中配置并选择供应商。"); return; }
+    if (!selectedPrompt.content.trim()) { new Notice("这个提示词内容为空，请先在设置 → AI 中填写。"); return; }
+    const provider = { ...configured };
+    const prompt = { ...selectedPrompt };
+    // Capture the card at selection time; later edits must not change an in-flight request.
+    const snapshot = { ...highlight };
+    const modal = new AIResultModal(this.app, prompt.name || "AI 生成", `${provider.name} · ${provider.model}`);
+    this.pendingAI.set(highlight.id, modal);
+    modal.open();
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const file = this.app.vault.getAbstractFileByPath(snapshot.sourcePath);
+      if (!(file instanceof TFile)) throw new Error("找不到这条高亮的原笔记，请检查文件是否已被删除或移动。");
+      const openEditor = this.app.workspace.getLeavesOfType("markdown")
+        .map((leaf) => leaf.view)
+        .find((view): view is MarkdownView => view instanceof MarkdownView && view.file?.path === file.path && view.getMode() === "source");
+      const source = openEditor ? openEditor.editor.getValue() : await this.app.vault.read(file);
+      const request = buildAIRequest(provider, buildHighlightInput(source, snapshot), prompt);
+      const response = await Promise.race([
+        requestUrl({ ...request, throw: false }),
+        new Promise<never>((_, reject) => {
+          timeout = setTimeout(() => reject(new Error("生成等待超时，请稍后重试或降低思考深度。")), 180000);
+        }),
+      ]);
+      let data: unknown;
+      try { data = JSON.parse(response.text); } catch { data = undefined; }
+      const result = parseAIResponse(response.status, data);
+      modal.showResult(result);
+      const current = this.settings.highlights.find((item) => item.id === snapshot.id);
+      if (current) {
+        current.aiResults = [...getHighlightAIResults(current)];
+        current.aiResult = { content: result, promptName: prompt.name, model: provider.model, createdAt: Date.now() };
+        current.aiResults.push(current.aiResult);
+        for (const type of [HIGHLIGHTS_VIEW_TYPE, HIGHLIGHTS_LIBRARY_VIEW_TYPE]) {
+          for (const leaf of this.app.workspace.getLeavesOfType(type)) {
+            if (leaf.view instanceof HighlightsView) leaf.view.refreshAIResults(current);
+          }
+        }
+        try {
+          await this.saveSettings(false);
+          modal.close();
+          new Notice("AI 内容已追加到高亮卡片。");
+        } catch {
+          modal.showError("正文已生成，但保存失败，请先复制正文。");
+        }
+      } else {
+        modal.showError("正文已生成，但原高亮已删除，请从此窗口复制正文。");
+      }
+    } catch (error) {
+      // Avoid exposing response bodies or credentials in notices.
+      const message = error instanceof Error ? error.message : "";
+      const safePrefixes = ["找不到这条", "请输入", "API 地址", "请先填写", "请求失败", "接口未", "模型未", "回复达到", "生成等待"];
+      modal.showError(safePrefixes.some((prefix) => message.startsWith(prefix)) ? message : "生成失败，请检查网络、API 地址及供应商服务状态。");
+    } finally {
+      if (timeout !== undefined) clearTimeout(timeout);
+      this.pendingAI.delete(highlight.id);
+    }
   }
 
   requestDeleteHighlight(highlight: HighlightNote): void {
@@ -488,12 +584,16 @@ export default class OneMinuteEnglishPlugin extends Plugin {
   }
 
   async loadSettings(): Promise<void> {
-    this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+    const saved = await this.loadData();
+    this.settings = Object.assign({}, DEFAULT_SETTINGS, saved);
+    this.settings.ai = normalizeAISettings(saved?.ai);
     if (!Array.isArray(this.settings.highlights)) this.settings.highlights = [];
+    if (saved?.ai?.builtinPromptVersion !== 1) await this.saveData(this.settings);
   }
 
-  async saveSettings(): Promise<void> {
+  async saveSettings(refreshViews = true): Promise<void> {
     await this.saveData(this.settings);
+    if (!refreshViews) return;
     this.app.workspace.getLeavesOfType(VIEW_TYPE).forEach((leaf) => {
       const view = leaf.view;
       if (view instanceof OneMinuteEnglishView) view.render();
@@ -572,7 +672,7 @@ class HighlightsView extends ItemView {
     label.htmlFor = textarea.id = `ome-highlight-note-${highlight.id}`;
     textarea.value = highlight.note;
     textarea.addEventListener("input", () => { highlight.note = textarea.value; });
-    textarea.addEventListener("blur", () => void this.plugin.saveSettings());
+    textarea.addEventListener("blur", () => void this.plugin.saveSettings(false));
     textarea.addEventListener("keydown", (event) => {
       if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
         event.preventDefault();
@@ -580,19 +680,70 @@ class HighlightsView extends ItemView {
       }
     });
 
+    const results = card.createDiv({ cls: "ome-highlight-ai-results" });
+    results.dataset.highlightId = highlight.id;
+    this.renderAIResults(results, highlight);
+
     const actions = card.createDiv({ cls: "ome-highlight-card-actions" });
-    const createNote = actions.createEl("button", {
-      cls: "ome-highlight-create-note",
-      attr: { "aria-label": "将高亮转为笔记", title: "将高亮转为笔记" },
-    });
-    setIcon(createNote, "file-plus-2");
-    createNote.addEventListener("click", () => void this.plugin.convertHighlightToNote(highlight));
     const remove = actions.createEl("button", {
       cls: "ome-highlight-delete",
       attr: { "aria-label": "删除高亮", title: "删除高亮" },
     });
     setIcon(remove, "trash-2");
     remove.addEventListener("click", () => this.plugin.requestDeleteHighlight(highlight));
+    const createNote = actions.createEl("button", {
+      cls: "ome-highlight-create-note",
+      attr: { "aria-label": "将高亮转为笔记", title: "将高亮转为笔记" },
+    });
+    setIcon(createNote, "file-plus-2");
+    createNote.addEventListener("click", () => void this.plugin.convertHighlightToNote(highlight));
+    const ai = actions.createEl("button", {
+      cls: "ome-highlight-ai",
+      attr: { "aria-label": "选择 AI 提示词", title: "AI：选择提示词生成", "aria-haspopup": "menu" },
+    });
+    setIcon(ai, "sparkles");
+    ai.addEventListener("click", () => {
+      highlight.note = textarea.value;
+      this.plugin.showHighlightAIMenu(highlight, ai);
+    });
+  }
+
+  refreshAIResults(highlight: HighlightNote): void {
+    this.contentEl.querySelectorAll<HTMLElement>(".ome-highlight-ai-results").forEach((container) => {
+      if (container.dataset.highlightId === highlight.id) this.renderAIResults(container, highlight);
+    });
+  }
+
+  private renderAIResults(container: HTMLElement, highlight: HighlightNote): void {
+    container.empty();
+    for (const result of getHighlightAIResults(highlight)) {
+      const block = container.createDiv({ cls: "ome-highlight-ai-result" });
+      const header = block.createDiv({ cls: "ome-highlight-ai-result-header" });
+      const icon = header.createSpan({ cls: "ome-highlight-ai-result-icon" });
+      setIcon(icon, "sparkles");
+      header.createSpan({ cls: "ome-highlight-ai-result-title", text: result.promptName || "AI 生成" });
+      const copy = header.createEl("button", {
+        cls: "ome-highlight-ai-result-copy",
+        attr: { "aria-label": "复制 AI 内容", title: "复制 AI 内容" },
+      });
+      setIcon(copy, "copy");
+      copy.addEventListener("click", async () => {
+        try {
+          const clipboard = container.ownerDocument.defaultView?.navigator.clipboard;
+          if (!clipboard) throw new Error("Clipboard unavailable");
+          await clipboard.writeText(result.content);
+          new Notice("已复制 AI 内容");
+        } catch {
+          new Notice("复制失败，请选中正文手动复制。");
+        }
+      });
+      block.createDiv({ cls: "ome-highlight-ai-result-body", text: result.content });
+      if (Number.isFinite(result.createdAt)) block.createEl("time", {
+        cls: "ome-highlight-ai-result-time",
+        text: new Date(result.createdAt).toLocaleString(),
+        attr: { title: result.model },
+      });
+    }
   }
 
   protected async openSource(highlight: HighlightNote): Promise<void> {
@@ -1030,12 +1181,33 @@ class OneMinuteEnglishView extends ItemView {
 }
 
 class OneMinuteEnglishSettingTab extends PluginSettingTab {
+  private activeTab: "general" | "ai" = "general";
+
   constructor(app: App, private readonly plugin: OneMinuteEnglishPlugin) { super(app, plugin); }
 
   display(): void {
     const { containerEl } = this;
     containerEl.empty();
+    containerEl.addClass("ome-settings");
     containerEl.createEl("h2", { text: "One Minute English 设置" });
+    const tabs = containerEl.createDiv({ cls: "ome-settings-tabs", attr: { "aria-label": "设置分类" } });
+    for (const [id, label] of [["general", "常规"], ["ai", "AI"]] as const) {
+      const button = tabs.createEl("button", {
+        text: label,
+        cls: `ome-settings-tab${this.activeTab === id ? " is-active" : ""}`,
+        attr: { type: "button", "aria-pressed": String(this.activeTab === id) },
+      });
+      button.addEventListener("click", () => {
+        this.activeTab = id;
+        this.display();
+        this.containerEl.querySelectorAll<HTMLButtonElement>(".ome-settings-tab")[id === "general" ? 0 : 1]?.focus();
+      });
+    }
+    if (this.activeTab === "ai") {
+      renderAISettings(containerEl.createDiv({ cls: "ome-ai-settings" }), this.app, this.plugin.settings.ai,
+        () => this.plugin.saveSettings(false));
+      return;
+    }
     new Setting(containerEl)
       .setName("设为启动页面")
       .setDesc("Obsidian 启动或所有标签页关闭后，自动显示 One Minute English 主页。")

@@ -219,6 +219,7 @@ mark.ome-note-highlight {
   line-height: 1.65;
 }
 .ome-highlight-create-note,
+.ome-highlight-ai,
 .ome-highlight-delete {
   flex: 0 0 auto;
   width: 28px;
@@ -234,8 +235,12 @@ mark.ome-note-highlight {
   cursor: pointer;
 }
 .ome-highlight-create-note:hover { color: var(--text-accent); background: var(--background-modifier-hover) !important; }
+.ome-highlight-ai { color: var(--text-accent); }
+.ome-highlight-ai:hover { background: var(--background-modifier-hover) !important; }
+.ome-highlight-delete { margin-right: auto; }
 .ome-highlight-delete:hover { color: var(--text-error); background: var(--background-modifier-error) !important; }
 .ome-highlight-create-note svg,
+.ome-highlight-ai svg,
 .ome-highlight-delete svg { width: 16px; height: 16px; }
 .ome-highlight-source {
   display: block;
@@ -265,6 +270,37 @@ mark.ome-note-highlight {
   font-size: 12px;
   line-height: 1.55;
 }
+.ome-highlight-ai-results { display: flex; flex-direction: column; gap: 10px; }
+.ome-highlight-ai-results:empty { display: none; }
+.ome-highlight-ai-result {
+  margin-top: 10px;
+  padding: 12px;
+  border: 1px solid var(--background-modifier-border);
+  border-left: 3px solid var(--interactive-accent);
+  border-radius: 8px;
+  background: var(--background-primary);
+}
+.ome-highlight-ai-result-header { display: flex; align-items: center; gap: 6px; margin-bottom: 10px; color: var(--text-accent); }
+.ome-highlight-ai-result-icon { display: inline-flex; flex: 0 0 auto; }
+.ome-highlight-ai-result-icon svg, .ome-highlight-ai-result-copy svg { width: 14px; height: 14px; }
+.ome-highlight-ai-result-title { flex: 1; min-width: 0; font-size: 12px; font-weight: 600; overflow-wrap: anywhere; }
+.ome-highlight-ai-result-copy {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  box-shadow: none !important;
+  background: transparent !important;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.ome-highlight-ai-result-copy:hover { color: var(--text-accent); background: var(--background-modifier-hover) !important; }
+.ome-highlight-ai-result-body { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.8; font-size: 13px; user-select: text; }
+.ome-highlight-ai-result-time { display: block; margin-top: 10px; font-size: 10px; color: var(--text-faint); }
+
 .ome-highlight-empty {
   min-height: 220px;
   display: grid;
@@ -351,6 +387,61 @@ mark.ome-note-highlight {
   align-items: start;
 }
 .ome-highlight-library-empty { padding: 18px 10px; color: var(--text-faint); font-size: 12px; text-align: center; }
+
+.ome-ai-result-modal { width: min(720px, calc(100vw - 32px)); }
+.ome-ai-result-text { width: 100%; min-height: 300px; max-height: 55vh; resize: vertical; line-height: 1.8; }
+.ome-ai-result-status { color: var(--text-muted); }
+.ome-ai-result-status.is-error { color: var(--text-error); }
+
+.ome-settings-tabs {
+  display: flex;
+  gap: 8px;
+  margin: 0 0 22px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+.ome-settings-tab { min-width: 70px; box-shadow: none !important; }
+.ome-settings-tab.is-active { background: var(--interactive-accent); color: var(--text-on-accent); }
+.ome-ai-settings h3 { margin-top: 24px; }
+.ome-ai-card {
+  margin: 14px 0;
+  padding: 4px 16px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 10px;
+  background: var(--background-primary);
+}
+.ome-ai-card > .setting-item:first-child { border-top: 0; }
+.ome-ai-card .setting-item-control { min-width: 0; flex-wrap: wrap; }
+.ome-ai-card input[type="text"], .ome-ai-card input[type="password"] { width: 280px; max-width: 100%; }
+.ome-ai-settings select { max-width: 100%; }
+.ome-ai-prompt-list { display: flex; flex-direction: column; gap: 8px; }
+.ome-ai-prompt-row { padding: 0 14px; border: 1px solid var(--background-modifier-border); border-radius: 8px; }
+.ome-ai-prompt-row .setting-item { border: 0; }
+.ome-ai-prompt-row .setting-item-info { min-width: 0; }
+.ome-ai-prompt-row .setting-item-name { overflow-wrap: anywhere; }
+.ome-ai-prompt-row .setting-item-description { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.ome-ai-prompt-row .setting-item-control { flex-shrink: 0; gap: 6px; }
+.ome-ai-prompt-default { display: inline-block; margin-left: 8px; padding: 1px 6px; border-radius: 4px; background: var(--background-modifier-hover); color: var(--text-accent); font-size: 10px; vertical-align: middle; }
+.ome-ai-prompt-modal { width: min(760px, calc(100vw - 32px)); }
+.ome-ai-prompt-modal .ome-ai-prompt-editor-name input { width: 100%; }
+.ome-ai-prompt-modal .ome-ai-prompt-editor-name .setting-item-control { flex: 1; min-width: 0; }
+.ome-ai-prompt-modal .ome-ai-prompt-editor-actions { justify-content: flex-end; }
+.ome-ai-prompt-modal .ome-ai-prompt-editor-actions .setting-item-info { display: none; }
+.ome-ai-prompt-content.setting-item { display: block; }
+.ome-ai-prompt-content .setting-item-info { margin: 0 0 10px; }
+.ome-ai-prompt-content .setting-item-control { width: 100%; }
+.ome-ai-prompt-content textarea { width: 100%; min-height: 240px; max-height: 50vh; resize: vertical; line-height: 1.6; }
+.ome-ai-empty, .ome-ai-test-status { color: var(--text-muted); font-size: var(--font-ui-small); }
+.ome-ai-test-status:empty { display: none; }
+.ome-ai-test-status[data-state="error"] { color: var(--text-error); }
+.ome-ai-test-status[data-state="success"] { color: var(--text-success); }
+
+@media (max-width: 620px) {
+  .ome-ai-settings .setting-item { flex-direction: column; align-items: stretch; gap: 10px; }
+  .ome-ai-settings .setting-item-info { margin-right: 0; }
+  .ome-ai-settings .setting-item-control { justify-content: flex-start; flex-wrap: wrap; }
+  .ome-ai-card input[type="text"], .ome-ai-card input[type="password"] { width: 100%; }
+}
 
 @media (max-width: 900px) {
   .ome-columns { grid-template-columns: 1fr; }
