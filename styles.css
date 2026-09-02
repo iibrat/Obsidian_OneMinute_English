@@ -203,7 +203,13 @@ mark.ome-note-highlight {
   background: var(--background-primary-alt);
 }
 .ome-highlight-card-head { display: flex; align-items: flex-start; gap: 8px; }
-.ome-highlight-card-actions { flex: 0 0 auto; display: flex; align-items: center; gap: 2px; }
+.ome-highlight-card-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 2px;
+  margin-top: 8px;
+}
 .ome-highlight-text {
   flex: 1;
   min-width: 0;
@@ -339,6 +345,11 @@ mark.ome-note-highlight {
 .ome-highlight-library-cards { min-width: 0; padding: 16px; overflow-y: auto; }
 .ome-highlight-library-cards-header { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
 .ome-highlight-library-cards-header h3 { margin: 0; font-size: 16px; }
+.ome-highlight-library-cards .ome-highlight-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+}
 .ome-highlight-library-empty { padding: 18px 10px; color: var(--text-faint); font-size: 12px; text-align: center; }
 
 @media (max-width: 900px) {
@@ -367,4 +378,5 @@ mark.ome-note-highlight {
   .ome-highlights-library { padding: 9px; overflow-y: auto; }
   .ome-highlights-library-columns { height: auto; min-height: calc(100% - 42px); grid-template-columns: 1fr; overflow: visible; }
   .ome-highlight-note-list { max-height: 220px; border-right: 0; border-bottom: 1px solid var(--background-modifier-border); }
+  .ome-highlight-library-cards .ome-highlight-list { grid-template-columns: 1fr; }
 }

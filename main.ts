@@ -552,19 +552,6 @@ class HighlightsView extends ItemView {
     const card = parent.createDiv({ cls: "ome-highlight-card" });
     const head = card.createDiv({ cls: "ome-highlight-card-head" });
     head.createDiv({ cls: "ome-highlight-text", text: highlight.text });
-    const actions = head.createDiv({ cls: "ome-highlight-card-actions" });
-    const createNote = actions.createEl("button", {
-      cls: "ome-highlight-create-note",
-      attr: { "aria-label": "将高亮转为笔记", title: "将高亮转为笔记" },
-    });
-    setIcon(createNote, "file-plus-2");
-    createNote.addEventListener("click", () => void this.plugin.convertHighlightToNote(highlight));
-    const remove = actions.createEl("button", {
-      cls: "ome-highlight-delete",
-      attr: { "aria-label": "删除高亮", title: "删除高亮" },
-    });
-    setIcon(remove, "trash-2");
-    remove.addEventListener("click", () => this.plugin.requestDeleteHighlight(highlight));
 
     const source = card.createEl("button", {
       cls: "ome-highlight-source",
@@ -589,6 +576,20 @@ class HighlightsView extends ItemView {
         textarea.blur();
       }
     });
+
+    const actions = card.createDiv({ cls: "ome-highlight-card-actions" });
+    const createNote = actions.createEl("button", {
+      cls: "ome-highlight-create-note",
+      attr: { "aria-label": "将高亮转为笔记", title: "将高亮转为笔记" },
+    });
+    setIcon(createNote, "file-plus-2");
+    createNote.addEventListener("click", () => void this.plugin.convertHighlightToNote(highlight));
+    const remove = actions.createEl("button", {
+      cls: "ome-highlight-delete",
+      attr: { "aria-label": "删除高亮", title: "删除高亮" },
+    });
+    setIcon(remove, "trash-2");
+    remove.addEventListener("click", () => this.plugin.requestDeleteHighlight(highlight));
   }
 
   protected async openSource(highlight: HighlightNote): Promise<void> {
