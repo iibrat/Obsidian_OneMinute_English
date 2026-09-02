@@ -23,6 +23,17 @@ const HIGHLIGHTS_VIEW_TYPE = "one-minute-english-highlights-view";
 const HIGHLIGHTS_LIBRARY_VIEW_TYPE = "one-minute-english-highlights-library-view";
 type TopicStatus = "editing" | "completed" | "published";
 
+function appendLinkAtBottom(content: string, link: string): string {
+  if (content.split(/\r?\n/).some((line) => line.trim() === link)) return content;
+  const eol = content.includes("\r\n") ? "\r\n" : "\n";
+  const separator = !content
+    ? ""
+    : content.endsWith(`${eol}${eol}`)
+      ? ""
+      : content.endsWith(eol) ? eol : `${eol}${eol}`;
+  return `${content}${separator}${link}${eol}`;
+}
+
 interface HighlightNote {
   id: string;
   text: string;
@@ -381,9 +392,18 @@ export default class OneMinuteEnglishPlugin extends Plugin {
       new Notice("同名笔记已经存在，请修改名称");
       return false;
     }
+    const source = this.app.vault.getAbstractFileByPath(highlight.sourcePath);
+    if (!(source instanceof TFile)) {
+      new Notice("原笔记已不存在，无法建立双链");
+      return false;
+    }
     const note = highlight.note.trim();
-    const content = note ? `${highlight.text}\n\n## 补充内容\n\n${note}` : highlight.text;
+    const body = note ? `${highlight.text}\n\n## 补充内容\n\n${note}` : highlight.text;
+    const sourceLink = this.app.fileManager.generateMarkdownLink(source, path);
+    const content = appendLinkAtBottom(body, sourceLink);
     const file = await this.app.vault.create(path, content);
+    const newNoteLink = this.app.fileManager.generateMarkdownLink(file, source.path);
+    await this.app.vault.process(source, (sourceContent) => appendLinkAtBottom(sourceContent, newNoteLink));
     new Notice(`已生成笔记：${file.basename}`);
     await this.app.workspace.getLeaf(false).openFile(file);
     return true;
