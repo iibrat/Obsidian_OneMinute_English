@@ -398,7 +398,10 @@ export default class OneMinuteEnglishPlugin extends Plugin {
       return false;
     }
     const note = highlight.note.trim();
-    const body = note ? `${highlight.text}\n\n## 补充内容\n\n${note}` : highlight.text;
+    const statusProperty = this.settings.statusProperty.trim() || "状态";
+    const frontmatter = `---\n${JSON.stringify(statusProperty)}: []\n---`;
+    const noteBody = note ? `${highlight.text}\n\n## 补充内容\n\n${note}` : highlight.text;
+    const body = `${frontmatter}\n\n${noteBody}`;
     const sourceLink = this.app.fileManager.generateMarkdownLink(source, path);
     const content = appendLinkAtBottom(body, sourceLink);
     const file = await this.app.vault.create(path, content);
