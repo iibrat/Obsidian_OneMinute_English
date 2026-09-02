@@ -22,6 +22,7 @@ import {
 import { AIPrompt, AIResult, AISettings, buildAINoteRequest, buildHighlightInput, getHighlightAIResults, normalizeAISettings, parseAIResponse, parseAINoteContent } from "./ai";
 import { renderAISettings } from "./ai-settings";
 import { AIResultModal } from "./ai-result-modal";
+import { renderShadowingToolCard } from "./shadowing-tool";
 
 const VIEW_TYPE = "one-minute-english-view";
 const HIGHLIGHTS_VIEW_TYPE = "one-minute-english-highlights-view";
@@ -1017,6 +1018,7 @@ class OneMinuteEnglishView extends ItemView {
     this.statCard(stats, "files", materialFiles.length, "素材数量");
     this.statCard(stats, "message-square-text", topicFiles.length, "话题数量");
     this.statCard(stats, "clock-alert", abandonedTopics, "荒废话题", true);
+    renderShadowingToolCard(stats, this.app);
   }
 
   private statCard(parent: HTMLElement, iconName: string, value: number, label: string, danger = false): void {
