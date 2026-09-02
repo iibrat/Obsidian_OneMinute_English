@@ -126,6 +126,34 @@ export function parseAIResponse(status: number, data: unknown): string {
   return content.trim();
 }
 
+export function buildAINoteRequest(provider: AIProvider, input: string, prompt: AIPrompt): ReturnType<typeof buildAIRequest> {
+  const outputFormat = `笔记输出格式（优先于前文有关输出形式的要求）：
+请在同一次回复中返回一个 JSON 对象，且仅含两个字符串字段：{"title":"笔记标题","content":"完整正文"}。
+title：根据这次生成正文的核心主题拟定简短、自然且有辨识度的标题；不要使用原笔记名称、提示词名称或时间戳拼接标题，不要带文件扩展名。
+content：严格遵循前文的任务、难度、语气和篇幅要求。前文的“只输出正文”“不要标题”等要求仅适用于此字段。
+请输出合法 JSON，正文中的换行写成转义字符，不要在 JSON 外添加说明或 Markdown 代码围栏。`;
+  return buildAIRequest(provider, input, { ...prompt, content: `${prompt.content}\n\n${outputFormat}` });
+}
+
+export function parseAINoteContent(raw: string): { title: string; content: string } {
+  let value: unknown;
+  try {
+    value = JSON.parse(raw.trim().replace(/^```(?:json)?\s*\n([\s\S]*?)\n```$/i, "$1"));
+  } catch {
+    throw new Error("AI 返回的标题和正文格式不正确，请重试；当前回复可先复制保存。");
+  }
+  if (!isRecord(value) || typeof value.title !== "string" || !value.title.trim()
+    || typeof value.content !== "string" || !value.content.trim()) {
+    throw new Error("AI 返回的标题或正文为空，请重试；当前回复可先复制保存。");
+  }
+  let title = value.title.trim().replace(/\.md$/i, "")
+    .replace(/[\\/:*?"<>|\[\]#^\x00-\x1f]/g, "-").replace(/\s+/g, " ")
+    .slice(0, 100).replace(/^[. ]+|[. ]+$/g, "");
+  if (!title) throw new Error("AI 返回的标题无法用作文件名，请重试。");
+  if (/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(title)) title = `_${title}`;
+  return { title, content: value.content.trim() };
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }

@@ -43,7 +43,7 @@ export class AIResultModal extends Modal {
       });
       output.value = this.result;
     } else if (!this.isError) {
-      this.contentEl.createEl("p", { cls: "setting-item-description", text: "关闭窗口后仍会继续生成，完成后正文会自动追加到当前高亮卡片。" });
+      this.contentEl.createEl("p", { cls: "setting-item-description", text: "关闭窗口后仍会继续生成。完成后会在话题目录创建新笔记，并在高亮卡片中显示链接。" });
     }
     const actions = new Setting(this.contentEl);
     if (this.result) actions.addButton((button) => button.setButtonText("复制正文").setCta().onClick(async () => {

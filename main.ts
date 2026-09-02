@@ -19,7 +19,7 @@ import {
   requestUrl,
   setIcon,
 } from "obsidian";
-import { AIPrompt, AIResult, AISettings, buildAIRequest, buildHighlightInput, getHighlightAIResults, normalizeAISettings, parseAIResponse } from "./ai";
+import { AIPrompt, AIResult, AISettings, buildAINoteRequest, buildHighlightInput, getHighlightAIResults, normalizeAISettings, parseAIResponse, parseAINoteContent } from "./ai";
 import { renderAISettings } from "./ai-settings";
 import { AIResultModal } from "./ai-result-modal";
 
@@ -47,6 +47,7 @@ interface HighlightNote {
   createdAt: number;
   aiResult?: AIResult;
   aiResults?: AIResult[];
+  aiNotes?: { path: string; promptName: string; createdAt: number }[];
 }
 
 interface FolderTab {
@@ -374,13 +375,17 @@ export default class OneMinuteEnglishPlugin extends Plugin {
     const pending = this.pendingAI.get(highlight.id);
     if (pending) menu.addItem((item) => item.setTitle("正在生成，查看进度…").setIcon("loader")
       .onClick(() => pending.open()));
-    if (highlight.aiResult) menu.addItem((item) => item.setTitle("查看上次结果").setIcon("file-text").onClick(() => {
-      const result = highlight.aiResult!;
-      const modal = new AIResultModal(this.app, result.promptName, result.model);
-      modal.showResult(result.content);
-      modal.open();
-    }));
-    if (pending || highlight.aiResult) menu.addSeparator();
+    const latestNote = highlight.aiNotes?.[highlight.aiNotes.length - 1];
+    if (latestNote) menu.addItem((item) => item.setTitle("打开上次生成的笔记").setIcon("file-text")
+      .onClick(() => void this.openAINote(latestNote.path)));
+    const legacyResults = getHighlightAIResults(highlight);
+    legacyResults.forEach((result, index) => menu.addItem((item) => item
+      .setTitle(`历史结果 ${index + 1} · ${result.promptName || "AI 生成"}`).setIcon("history").onClick(() => {
+        const modal = new AIResultModal(this.app, result.promptName, result.model);
+        modal.showResult(result.content);
+        modal.open();
+      })));
+    if (pending || latestNote || legacyResults.length) menu.addSeparator();
     const prompts = this.settings.ai.prompts;
     if (!prompts.length) menu.addItem((item) => item.setTitle("请先在设置 → AI 中添加提示词").setDisabled(true));
     for (const prompt of prompts) {
@@ -395,6 +400,10 @@ export default class OneMinuteEnglishPlugin extends Plugin {
 
   private async generateHighlightAI(highlight: HighlightNote, selectedPrompt: AIPrompt): Promise<void> {
     if (this.pendingAI.has(highlight.id)) return;
+    const folderPath = this.settings.topicFolder.trim().replace(/^\/+|\/+$/g, "");
+    if (!folderPath) { new Notice("请先在设置 → 常规中配置“话题目录”。"); return; }
+    const topicFolder = this.app.vault.getAbstractFileByPath(normalizePath(folderPath));
+    if (!(topicFolder instanceof TFolder)) { new Notice("配置的“话题目录”不存在，请在设置 → 常规中重新选择。"); return; }
     const configured = this.settings.ai.providers.find((provider) => provider.id === this.settings.ai.activeProviderId);
     if (!configured) { new Notice("请先在设置 → AI 中配置并选择供应商。"); return; }
     if (!selectedPrompt.content.trim()) { new Notice("这个提示词内容为空，请先在设置 → AI 中填写。"); return; }
@@ -413,7 +422,7 @@ export default class OneMinuteEnglishPlugin extends Plugin {
         .map((leaf) => leaf.view)
         .find((view): view is MarkdownView => view instanceof MarkdownView && view.file?.path === file.path && view.getMode() === "source");
       const source = openEditor ? openEditor.editor.getValue() : await this.app.vault.read(file);
-      const request = buildAIRequest(provider, buildHighlightInput(source, snapshot), prompt);
+      const request = buildAINoteRequest(provider, buildHighlightInput(source, snapshot), prompt);
       const response = await Promise.race([
         requestUrl({ ...request, throw: false }),
         new Promise<never>((_, reject) => {
@@ -424,22 +433,27 @@ export default class OneMinuteEnglishPlugin extends Plugin {
       try { data = JSON.parse(response.text); } catch { data = undefined; }
       const result = parseAIResponse(response.status, data);
       modal.showResult(result);
+      const generated = parseAINoteContent(result);
+      modal.showResult(generated.content);
       const current = this.settings.highlights.find((item) => item.id === snapshot.id);
       if (current) {
-        current.aiResults = [...getHighlightAIResults(current)];
-        current.aiResult = { content: result, promptName: prompt.name, model: provider.model, createdAt: Date.now() };
-        current.aiResults.push(current.aiResult);
-        for (const type of [HIGHLIGHTS_VIEW_TYPE, HIGHLIGHTS_LIBRARY_VIEW_TYPE]) {
-          for (const leaf of this.app.workspace.getLeavesOfType(type)) {
-            if (leaf.view instanceof HighlightsView) leaf.view.refreshAIResults(current);
-          }
-        }
+        let createdNote: TFile | undefined;
         try {
+          createdNote = await this.createAIResultNote(topicFolder, file, generated.title, generated.content);
+          current.aiNotes = [...(current.aiNotes ?? []), { path: createdNote.path, promptName: prompt.name, createdAt: Date.now() }];
+          for (const type of [HIGHLIGHTS_VIEW_TYPE, HIGHLIGHTS_LIBRARY_VIEW_TYPE]) {
+            for (const leaf of this.app.workspace.getLeavesOfType(type)) {
+              if (leaf.view instanceof HighlightsView) leaf.view.refreshAIResults(current);
+            }
+          }
           await this.saveSettings(false);
           modal.close();
-          new Notice("AI 内容已追加到高亮卡片。");
+          new Notice(`已生成话题笔记：${createdNote.basename}`);
         } catch {
-          modal.showError("正文已生成，但保存失败，请先复制正文。");
+          modal.showError(createdNote
+            ? `笔记已保存到 ${createdNote.path}，但卡片链接保存失败，可在话题目录中打开笔记。`
+            : "正文已生成，但新笔记创建失败。请检查话题目录和原笔记是否仍存在，并先复制正文。");
+          modal.open();
         }
       } else {
         modal.showError("正文已生成，但原高亮已删除，请从此窗口复制正文。");
@@ -447,12 +461,41 @@ export default class OneMinuteEnglishPlugin extends Plugin {
     } catch (error) {
       // Avoid exposing response bodies or credentials in notices.
       const message = error instanceof Error ? error.message : "";
-      const safePrefixes = ["找不到这条", "请输入", "API 地址", "请先填写", "请求失败", "接口未", "模型未", "回复达到", "生成等待"];
+      const safePrefixes = ["找不到这条", "请输入", "API 地址", "请先填写", "请求失败", "接口未", "模型未", "回复达到", "生成等待", "AI 返回"];
       modal.showError(safePrefixes.some((prefix) => message.startsWith(prefix)) ? message : "生成失败，请检查网络、API 地址及供应商服务状态。");
+      if (message.startsWith("AI 返回")) modal.open();
     } finally {
       if (timeout !== undefined) clearTimeout(timeout);
       this.pendingAI.delete(highlight.id);
     }
+  }
+
+  private async createAIResultNote(folder: TFolder, source: TFile, title: string, result: string): Promise<TFile> {
+    if (this.app.vault.getAbstractFileByPath(folder.path) !== folder || this.app.vault.getAbstractFileByPath(source.path) !== source) {
+      throw new Error("The topic folder or source note no longer exists.");
+    }
+    let filename = title;
+    let collisionTimestamp = 0;
+    for (let suffix = 0; ; suffix++) {
+      const path = normalizePath(`${folder.path}/${filename}.md`);
+      const statusProperty = this.settings.statusProperty.trim() || "状态";
+      const sourceLink = this.app.fileManager.generateMarkdownLink(source, path);
+      const content = `---\n${JSON.stringify(statusProperty)}: []\n---\n\n${result}\n\n## 来源笔记\n\n${sourceLink}\n`;
+      try {
+        return await this.app.vault.create(path, content);
+      } catch (error) {
+        // Try the AI title first. Only check this exact path after create fails.
+        if (!this.app.vault.getAbstractFileByPath(path)) throw error;
+        if (!collisionTimestamp) collisionTimestamp = Date.now();
+        filename = `${title}-${collisionTimestamp}${suffix ? `-${suffix}` : ""}`;
+      }
+    }
+  }
+
+  async openAINote(path: string): Promise<void> {
+    const file = this.app.vault.getAbstractFileByPath(path);
+    if (!(file instanceof TFile)) { new Notice("关联笔记已不存在或已在库外移动。"); return; }
+    await this.app.workspace.getLeaf("tab").openFile(file);
   }
 
   requestDeleteHighlight(highlight: HighlightNote): void {
@@ -563,6 +606,12 @@ export default class OneMinuteEnglishPlugin extends Plugin {
         highlight.sourcePath = `${newPath}${highlight.sourcePath.slice(oldPath.length)}`;
         changed = true;
       }
+      highlight.aiNotes?.forEach((note) => {
+        if (note.path === oldPath || note.path.startsWith(`${oldPath}/`)) {
+          note.path = `${newPath}${note.path.slice(oldPath.length)}`;
+          changed = true;
+        }
+      });
     });
     if (changed) await this.saveSettings();
   }
@@ -716,32 +765,18 @@ class HighlightsView extends ItemView {
 
   private renderAIResults(container: HTMLElement, highlight: HighlightNote): void {
     container.empty();
-    for (const result of getHighlightAIResults(highlight)) {
-      const block = container.createDiv({ cls: "ome-highlight-ai-result" });
-      const header = block.createDiv({ cls: "ome-highlight-ai-result-header" });
-      const icon = header.createSpan({ cls: "ome-highlight-ai-result-icon" });
-      setIcon(icon, "sparkles");
-      header.createSpan({ cls: "ome-highlight-ai-result-title", text: result.promptName || "AI 生成" });
-      const copy = header.createEl("button", {
-        cls: "ome-highlight-ai-result-copy",
-        attr: { "aria-label": "复制 AI 内容", title: "复制 AI 内容" },
+    for (const note of highlight.aiNotes ?? []) {
+      const row = container.createDiv({ cls: "ome-highlight-ai-note" });
+      const icon = row.createSpan({ cls: "ome-highlight-ai-note-icon" });
+      setIcon(icon, "file-text");
+      const link = row.createEl("a", {
+        cls: "ome-highlight-ai-note-link",
+        text: note.path.split("/").pop()?.replace(/\.md$/i, "") || note.promptName,
+        attr: { href: note.path, title: `打开笔记：${note.path}` },
       });
-      setIcon(copy, "copy");
-      copy.addEventListener("click", async () => {
-        try {
-          const clipboard = container.ownerDocument.defaultView?.navigator.clipboard;
-          if (!clipboard) throw new Error("Clipboard unavailable");
-          await clipboard.writeText(result.content);
-          new Notice("已复制 AI 内容");
-        } catch {
-          new Notice("复制失败，请选中正文手动复制。");
-        }
-      });
-      block.createDiv({ cls: "ome-highlight-ai-result-body", text: result.content });
-      if (Number.isFinite(result.createdAt)) block.createEl("time", {
-        cls: "ome-highlight-ai-result-time",
-        text: new Date(result.createdAt).toLocaleString(),
-        attr: { title: result.model },
+      link.addEventListener("click", (event) => {
+        event.preventDefault();
+        void this.plugin.openAINote(note.path);
       });
     }
   }
@@ -1218,7 +1253,7 @@ class OneMinuteEnglishSettingTab extends PluginSettingTab {
       }));
     containerEl.createEl("p", { cls: "setting-item-description", text: "目录路径均相对于当前 Obsidian 库；列表会自动包含所有子目录中的 Markdown 文档。" });
     this.folderSetting("素材目录", "主页“素材”标签加载的目录。", "materialFolder");
-    this.folderSetting("话题目录", "右侧“话题列表”加载的目录。", "topicFolder");
+    this.folderSetting("话题目录", "话题列表加载的目录，也是 AI 生成笔记和高亮转笔记的保存位置。", "topicFolder");
     this.folderSetting("快速记录目录", "右下角 + 按钮创建的 Markdown 文档保存到这里。", "quickCaptureFolder");
     new Setting(containerEl)
       .setName("文件名时间格式")

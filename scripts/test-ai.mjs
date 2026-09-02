@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
 
 const bundle = await build({ entryPoints: [fileURLToPath(new URL("../ai.ts", import.meta.url))], bundle: true, write: false, format: "esm", platform: "node" });
-const { buildAIRequest, buildHighlightInput, parseAIResponse, createAIProvider, normalizeAISettings } = await import(`data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].text).toString("base64")}`);
+const { buildAIRequest, buildAINoteRequest, parseAINoteContent, buildHighlightInput, parseAIResponse, createAIProvider, normalizeAISettings } = await import(`data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].text).toString("base64")}`);
 const provider = (overrides = {}) => ({ ...createAIProvider(), apiKey: "test-key", ...overrides });
 const body = (config) => JSON.parse(buildAIRequest(config, "Hello").body);
 
@@ -129,4 +129,26 @@ test("仅展示最终正文；识别失败、空回复和截断，不泄漏服�
     assert.throws(() => parseAIResponse(200, value));
   }
   assert.throws(() => parseAIResponse(200, { choices: [{ finish_reason: "length", message: { content: "partial" } }] }), /截断/);
+});
+
+test("标题与正文一并请求，原提示词不被修改，标题不混入正文", () => {
+  const prompt = { id: "p", name: "口语生成", content: "只输出 B1 英文正文，不要标题。" };
+  const request = JSON.parse(buildAINoteRequest(provider(), "原材料", prompt).body);
+  assert.equal(prompt.content, "只输出 B1 英文正文，不要标题。");
+  assert.match(request.messages[0].content, /仅适用于此字段/);
+  assert.equal(request.messages[1].content, "原材料");
+  assert.deepEqual(parseAINoteContent('{"title":"A Better Morning", "content":"First line.\\nSecond line."}'), {
+    title: "A Better Morning", content: "First line.\nSecond line.",
+  });
+  assert.deepEqual(parseAINoteContent('```json\n{"title":"New Idea", "content":"Body"}\n```'), { title: "New Idea", content: "Body" });
+});
+
+test("AI 标题可安全用作文件名，无效输出不会生成文件", () => {
+  const parse = (title) => parseAINoteContent(JSON.stringify({ title, content: "Body" })).title;
+  assert.equal(parse(" A New Idea.md "), "A New Idea");
+  assert.equal(parse("CON"), "_CON");
+  assert.equal(/[\\/:*?"<>|\[\]#^]/.test(parse("../A: New / Idea?")), false);
+  for (const output of ["plain text", "null", "[]", '{"content":"Body"}', '{"title":"Title"}', '{"title":"...", "content":"Body"}', '{"title":"Title", "content":" "}']) {
+    assert.throws(() => parseAINoteContent(output), /AI 返回/);
+  }
 });

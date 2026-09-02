@@ -272,34 +272,10 @@ mark.ome-note-highlight {
 }
 .ome-highlight-ai-results { display: flex; flex-direction: column; gap: 10px; }
 .ome-highlight-ai-results:empty { display: none; }
-.ome-highlight-ai-result {
-  margin-top: 10px;
-  padding: 12px;
-  border: 1px solid var(--background-modifier-border);
-  border-left: 3px solid var(--interactive-accent);
-  border-radius: 8px;
-  background: var(--background-primary);
-}
-.ome-highlight-ai-result-header { display: flex; align-items: center; gap: 6px; margin-bottom: 10px; color: var(--text-accent); }
-.ome-highlight-ai-result-icon { display: inline-flex; flex: 0 0 auto; }
-.ome-highlight-ai-result-icon svg, .ome-highlight-ai-result-copy svg { width: 14px; height: 14px; }
-.ome-highlight-ai-result-title { flex: 1; min-width: 0; font-size: 12px; font-weight: 600; overflow-wrap: anywhere; }
-.ome-highlight-ai-result-copy {
-  display: grid;
-  place-items: center;
-  flex: 0 0 auto;
-  width: 26px;
-  height: 26px;
-  padding: 0;
-  border: 0;
-  box-shadow: none !important;
-  background: transparent !important;
-  color: var(--text-muted);
-  cursor: pointer;
-}
-.ome-highlight-ai-result-copy:hover { color: var(--text-accent); background: var(--background-modifier-hover) !important; }
-.ome-highlight-ai-result-body { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.8; font-size: 13px; user-select: text; }
-.ome-highlight-ai-result-time { display: block; margin-top: 10px; font-size: 10px; color: var(--text-faint); }
+.ome-highlight-ai-note { display: flex; align-items: flex-start; gap: 7px; margin-top: 8px; padding: 9px 10px; border: 1px solid var(--background-modifier-border); border-radius: 7px; background: var(--background-primary); }
+.ome-highlight-ai-note-icon { display: inline-flex; flex: 0 0 auto; margin-top: 2px; color: var(--text-accent); }
+.ome-highlight-ai-note-icon svg { width: 15px; height: 15px; }
+.ome-highlight-ai-note-link { min-width: 0; font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; color: var(--text-accent); cursor: pointer; }
 
 .ome-highlight-empty {
   min-height: 220px;
