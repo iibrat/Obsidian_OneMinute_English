@@ -128,9 +128,9 @@ export function parseAIResponse(status: number, data: unknown): string {
 
 export function buildAINoteRequest(provider: AIProvider, input: string, prompt: AIPrompt): ReturnType<typeof buildAIRequest> {
   const outputFormat = `笔记输出格式（优先于前文有关输出形式的要求）：
-请在同一次回复中返回一个 JSON 对象，且仅含两个字符串字段：{"title":"笔记标题","content":"完整正文"}。
-title：根据这次生成正文的核心主题拟定简短、自然且有辨识度的标题；不要使用原笔记名称、提示词名称或时间戳拼接标题，不要带文件扩展名。
-content：严格遵循前文的任务、难度、语气和篇幅要求。前文的“只输出正文”“不要标题”等要求仅适用于此字段。
+请在同一次回复中返回一个 JSON 对象，且仅含两个字符串字段：{"title":"中文笔记标题","content":"完整正文"}。
+title：必须使用简体中文，根据这次生成正文的核心主题拟定简短、自然且有辨识度的标题。无论正文或所选提示词使用什么语言，标题都固定为中文，不要输出英文标题或中英双语标题。不要使用原笔记名称、提示词名称或时间戳拼接标题，不要带文件扩展名。
+content：严格遵循前文的任务、语言、难度、语气和篇幅要求；中文标题要求不改变正文语言。前文的“只输出正文”“不要标题”等要求仅适用于此字段。
 请输出合法 JSON，正文中的换行写成转义字符，不要在 JSON 外添加说明或 Markdown 代码围栏。`;
   return buildAIRequest(provider, input, { ...prompt, content: `${prompt.content}\n\n${outputFormat}` });
 }

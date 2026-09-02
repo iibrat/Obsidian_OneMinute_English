@@ -281,6 +281,10 @@ export default class OneMinuteEnglishPlugin extends Plugin {
     });
     this.registerEvent(this.app.workspace.on("active-leaf-change", () => this.hideSelectionButton()));
     this.registerEvent(this.app.vault.on("rename", (file, oldPath) => void this.updateHighlightPaths(file.path, oldPath)));
+    this.registerEvent(this.app.vault.on("delete", (file) => {
+      void this.removeAINoteLinks(file.path, file instanceof TFolder)
+        .catch(() => new Notice("失效链接已从卡片移除，但保存失败，请检查库是否可写。"));
+    }));
     this.addSettingTab(new OneMinuteEnglishSettingTab(this.app, this));
     this.app.workspace.onLayoutReady(() => {
       if (this.settings.openAsStartupPage) void this.activateView();
@@ -440,7 +444,7 @@ export default class OneMinuteEnglishPlugin extends Plugin {
       if (current) {
         let createdNote: TFile | undefined;
         try {
-          createdNote = await this.createAIResultNote(topicFolder, file, generated.title, generated.content);
+          createdNote = await this.createAIResultNote(topicFolder, file, generated.title, generated.content, snapshot);
           current.aiNotes = [...(current.aiNotes ?? []), { path: createdNote.path, promptName: prompt.name, createdAt: Date.now() }];
           for (const type of [HIGHLIGHTS_VIEW_TYPE, HIGHLIGHTS_LIBRARY_VIEW_TYPE]) {
             for (const leaf of this.app.workspace.getLeavesOfType(type)) {
@@ -471,7 +475,7 @@ export default class OneMinuteEnglishPlugin extends Plugin {
     }
   }
 
-  private async createAIResultNote(folder: TFolder, source: TFile, title: string, result: string): Promise<TFile> {
+  private async createAIResultNote(folder: TFolder, source: TFile, title: string, result: string, highlight: Pick<HighlightNote, "text" | "note">): Promise<TFile> {
     if (this.app.vault.getAbstractFileByPath(folder.path) !== folder || this.app.vault.getAbstractFileByPath(source.path) !== source) {
       throw new Error("The topic folder or source note no longer exists.");
     }
@@ -481,7 +485,8 @@ export default class OneMinuteEnglishPlugin extends Plugin {
       const path = normalizePath(`${folder.path}/${filename}.md`);
       const statusProperty = this.settings.statusProperty.trim() || "状态";
       const sourceLink = this.app.fileManager.generateMarkdownLink(source, path);
-      const content = `---\n${JSON.stringify(statusProperty)}: []\n---\n\n${result}\n\n## 来源笔记\n\n${sourceLink}\n`;
+      const supplement = highlight.note.trim() ? highlight.note : "（未填写）";
+      const content = `---\n${JSON.stringify(statusProperty)}: []\n---\n\n${result}\n\n## 高亮内容\n\n${highlight.text}\n\n## 补充内容\n\n${supplement}\n\n## 来源笔记\n\n${sourceLink}\n`;
       try {
         return await this.app.vault.create(path, content);
       } catch (error) {
@@ -495,8 +500,37 @@ export default class OneMinuteEnglishPlugin extends Plugin {
 
   async openAINote(path: string): Promise<void> {
     const file = this.app.vault.getAbstractFileByPath(path);
-    if (!(file instanceof TFile)) { new Notice("关联笔记已不存在或已在库外移动。"); return; }
+    if (!(file instanceof TFile)) {
+      try {
+        await this.removeAINoteLinks(path);
+        new Notice("关联笔记已不存在，已清理卡片中的失效链接。");
+      } catch {
+        new Notice("失效链接已从卡片移除，但保存失败，请检查库是否可写。");
+      }
+      return;
+    }
     await this.app.workspace.getLeaf("tab").openFile(file);
+  }
+
+  private async removeAINoteLinks(path: string, includeDescendants = false): Promise<void> {
+    const changed: HighlightNote[] = [];
+    for (const highlight of this.settings.highlights) {
+      if (!highlight.aiNotes?.length) continue;
+      const remaining = highlight.aiNotes.filter((note) => note.path !== path
+        && !(includeDescendants && note.path.startsWith(`${path}/`)));
+      if (remaining.length === highlight.aiNotes.length) continue;
+      highlight.aiNotes = remaining;
+      changed.push(highlight);
+    }
+    if (!changed.length) return;
+    for (const type of [HIGHLIGHTS_VIEW_TYPE, HIGHLIGHTS_LIBRARY_VIEW_TYPE]) {
+      for (const leaf of this.app.workspace.getLeavesOfType(type)) {
+        if (leaf.view instanceof HighlightsView) {
+          for (const highlight of changed) leaf.view.refreshAIResults(highlight);
+        }
+      }
+    }
+    await this.saveSettings(false);
   }
 
   requestDeleteHighlight(highlight: HighlightNote): void {

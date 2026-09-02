@@ -136,6 +136,8 @@ test("标题与正文一并请求，原提示词不被修改，标题不混入�
   const request = JSON.parse(buildAINoteRequest(provider(), "原材料", prompt).body);
   assert.equal(prompt.content, "只输出 B1 英文正文，不要标题。");
   assert.match(request.messages[0].content, /仅适用于此字段/);
+  assert.match(request.messages[0].content, /必须使用简体中文/);
+  assert.match(request.messages[0].content, /中文标题要求不改变正文语言/);
   assert.equal(request.messages[1].content, "原材料");
   assert.deepEqual(parseAINoteContent('{"title":"A Better Morning", "content":"First line.\\nSecond line."}'), {
     title: "A Better Morning", content: "First line.\nSecond line.",

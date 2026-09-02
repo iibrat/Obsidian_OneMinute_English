@@ -126,6 +126,7 @@ test("菜单包含设置中的提示词，选择后携带当前编辑器原文�
   assert.deepEqual(ctx.operations.filter((op) => op.path === ctx.created[0].path).map((op) => op.type), ["create"]);
   assert.equal(ctx.plugin.saved.highlights[0].aiNotes[0].path, ctx.created[0].path);
   assert.match(ctx.created[0].content, /Generated speech\./);
+  assert.match(ctx.created[0].content, /## 高亮内容\n\nHighlighted passage\n\n## 补充内容\n\nLatest supplement/);
   assert.match(ctx.created[0].content, /## 来源笔记\n\n\[\[source\]\]/);
   assert.match(ctx.created[0].content, /"状态": \[\]/);
   assert.equal(ctx.highlight.aiResult, undefined);
@@ -143,8 +144,13 @@ test("其他笔记处于活动状态时仍读取高亮自己的原文；重复�
   assert.equal(ctx.requests.length, 1);
   assert.equal(ctx.reads(), 1);
   assert.equal(JSON.parse(JSON.parse(ctx.requests[0].body).messages[1].content)["笔记原文"], "Saved original text");
+  ctx.highlight.text = "Edited after submission";
+  ctx.highlight.note = "A later supplement";
   resolve(noteResponse("Success"));
   await pending;
+  assert.match(ctx.created[0].content, /## 高亮内容\n\nHighlighted passage\n\n## 补充内容\n\nLatest supplement/);
+  assert.equal(ctx.created[0].content.includes("Edited after submission"), false);
+  assert.equal(ctx.created[0].content.includes("A later supplement"), false);
 });
 
 test("无原文或空提示词不请求 API；接口失败保留上次结果且可再次提交", async () => {
@@ -252,4 +258,43 @@ test("AI 没有返回标题时不使用固定名称创建笔记", async () => {
   assert.equal(ctx.created.length, 0);
   assert.equal(ctx.highlight.aiNotes, undefined);
   assert.equal(ctx.plugin.pendingAI.size, 0);
+});
+
+test("删除生成笔记时清理所有卡片的对应链接，保留其他内容并保存", async () => {
+  const ctx = setup();
+  const removed = { path: "topics/deleted.md", promptName: "口语", createdAt: 1 };
+  const kept = { path: "topics/kept.md", promptName: "口语", createdAt: 2 };
+  ctx.highlight.aiNotes = [removed, kept];
+  ctx.highlight.aiResult = { content: "Historical output" };
+  ctx.plugin.settings.highlights.push({ id: "second", text: "Another highlight", note: "Other note", aiNotes: [{ ...removed }] });
+  await ctx.plugin.removeAINoteLinks(removed.path);
+  assert.deepEqual(ctx.plugin.saved.highlights[0].aiNotes, [kept]);
+  assert.deepEqual(ctx.plugin.saved.highlights[1].aiNotes, []);
+  assert.equal(ctx.highlight.text, "Highlighted passage");
+  assert.equal(ctx.highlight.note, "Latest supplement");
+  assert.equal(ctx.highlight.aiResult.content, "Historical output");
+  const saved = ctx.plugin.saved;
+  await ctx.plugin.removeAINoteLinks("unrelated.md");
+  assert.equal(ctx.plugin.saved, saved);
+});
+
+test("删除目录时清理其子目录链接，不误删同名前缀目录", async () => {
+  const ctx = setup();
+  ctx.highlight.aiNotes = ["topics/a.md", "topics/sub/b.md", "topics-other/c.md"]
+    .map((path) => ({ path, promptName: "口语", createdAt: 1 }));
+  await ctx.plugin.removeAINoteLinks("topics", true);
+  assert.deepEqual(ctx.plugin.saved.highlights[0].aiNotes.map((note) => note.path), ["topics-other/c.md"]);
+});
+
+test("点击外部删除的笔记链接时自动清理，有效链接仍正常打开", async () => {
+  const ctx = setup();
+  await ctx.plugin.generateHighlightAI(ctx.highlight, ctx.prompt);
+  const path = ctx.created[0].path;
+  await ctx.plugin.openAINote(path);
+  assert.equal(ctx.highlight.aiNotes.length, 1);
+  ctx.files.delete(path);
+  await ctx.plugin.openAINote(path);
+  assert.deepEqual(ctx.plugin.saved.highlights[0].aiNotes, []);
+  assert.equal(ctx.opened.length, 1);
+  assert.match(ctx.notices[ctx.notices.length - 1], /已清理/);
 });
