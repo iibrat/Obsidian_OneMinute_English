@@ -81,9 +81,7 @@
 .ome-status-tags { display: flex; gap: 7px; flex-wrap: wrap; justify-content: flex-end; }
 .ome-status-tag { border: 1px solid var(--ome-border); background: var(--background-secondary); color: var(--text-muted); box-shadow: none; border-radius: 999px; font-size: 12px; height: 28px; padding: 0 11px; }
 .ome-status-tag:hover, .ome-status-tag.is-active { color: var(--text-normal); border-color: var(--ome-accent); }
-.ome-status-editing.is-active { background: color-mix(in srgb, #e6a23c 20%, transparent); }
 .ome-status-completed.is-active { background: color-mix(in srgb, #67c23a 20%, transparent); }
-.ome-status-published.is-active { background: color-mix(in srgb, #409eff 20%, transparent); }
 
 .ome-file-list { overflow: visible; padding-top: 10px; }
 .ome-file-row { min-height: 64px; margin-bottom: 8px; border: 1px solid var(--ome-border); border-radius: 10px; padding: 9px 10px; display: flex; align-items: center; gap: 11px; cursor: pointer; transition: background 120ms ease, border-color 120ms ease; }

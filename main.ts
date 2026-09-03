@@ -27,7 +27,7 @@ import { renderShadowingToolCard } from "./shadowing-tool";
 const VIEW_TYPE = "one-minute-english-view";
 const HIGHLIGHTS_VIEW_TYPE = "one-minute-english-highlights-view";
 const HIGHLIGHTS_LIBRARY_VIEW_TYPE = "one-minute-english-highlights-library-view";
-type TopicStatus = "editing" | "completed" | "published";
+type TopicStatus = "completed";
 
 function appendLinkAtBottom(content: string, link: string): string {
   if (content.split(/\r?\n/).some((line) => line.trim() === link)) return content;
@@ -62,9 +62,7 @@ interface OneMinuteEnglishSettings {
   materialFolder: string;
   topicFolder: string;
   statusProperty: string;
-  editingValue: string;
   completedValue: string;
-  publishedValue: string;
   quickCaptureFolder: string;
   quickCaptureFilenameFormat: string;
   customTabs: FolderTab[];
@@ -77,9 +75,7 @@ const DEFAULT_SETTINGS: OneMinuteEnglishSettings = {
   materialFolder: "",
   topicFolder: "",
   statusProperty: "",
-  editingValue: "编辑中",
   completedValue: "已完成",
-  publishedValue: "已发布",
   quickCaptureFolder: "",
   quickCaptureFilenameFormat: "",
   customTabs: [],
@@ -701,10 +697,15 @@ export default class OneMinuteEnglishPlugin extends Plugin {
 
   async loadSettings(): Promise<void> {
     const saved = await this.loadData();
+    const hasLegacyStatuses = saved != null && ("editingValue" in saved || "publishedValue" in saved);
+    if (hasLegacyStatuses) {
+      delete saved.editingValue;
+      delete saved.publishedValue;
+    }
     this.settings = Object.assign({}, DEFAULT_SETTINGS, saved);
     this.settings.ai = normalizeAISettings(saved?.ai);
     if (!Array.isArray(this.settings.highlights)) this.settings.highlights = [];
-    if (saved?.ai?.builtinPromptVersion !== 1) await this.saveData(this.settings);
+    if (hasLegacyStatuses || saved?.ai?.builtinPromptVersion !== 1) await this.saveData(this.settings);
   }
 
   async saveSettings(refreshViews = true): Promise<void> {
@@ -1188,9 +1189,7 @@ class OneMinuteEnglishView extends ItemView {
       this.activeStatus = null;
       this.render();
     });
-    this.statusButton(tags, "editing", "编辑中");
     this.statusButton(tags, "completed", "已完成");
-    this.statusButton(tags, "published", "已发布");
 
     let files = this.filesInFolder(this.plugin.settings.topicFolder);
     files = this.activeStatus
@@ -1258,9 +1257,7 @@ class OneMinuteEnglishView extends ItemView {
   }
 
   private statusValue(status: TopicStatus): string {
-    if (status === "editing") return this.plugin.settings.editingValue;
-    if (status === "completed") return this.plugin.settings.completedValue;
-    return this.plugin.settings.publishedValue;
+    return this.plugin.settings[`${status}Value`];
   }
 
   private filterByStatus(files: TFile[], status: TopicStatus, warn: boolean): TFile[] {
@@ -1360,9 +1357,7 @@ class OneMinuteEnglishSettingTab extends PluginSettingTab {
         this.plugin.settings.statusProperty = value.trim();
         await this.plugin.saveSettings();
       }));
-    this.valueSetting("“编辑中”对应值", "editingValue", "编辑中");
     this.valueSetting("“已完成”对应值", "completedValue", "已完成");
-    this.valueSetting("“已发布”对应值", "publishedValue", "已发布");
   }
 
   private folderSetting(name: string, description: string, key: "materialFolder" | "topicFolder" | "quickCaptureFolder"): void {
@@ -1381,7 +1376,7 @@ class OneMinuteEnglishSettingTab extends PluginSettingTab {
       }));
   }
 
-  private valueSetting(name: string, key: "editingValue" | "completedValue" | "publishedValue", placeholder: string): void {
+  private valueSetting(name: string, key: "completedValue", placeholder: string): void {
     new Setting(this.containerEl)
       .setName(name)
       .setDesc("该属性为此值时归入对应标签；也支持属性值为列表。")
