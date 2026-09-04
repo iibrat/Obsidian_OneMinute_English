@@ -22,7 +22,7 @@ import {
 import { AIPrompt, AIResult, AISettings, buildAINoteRequest, buildHighlightInput, getHighlightAIResults, normalizeAISettings, parseAIResponse, parseAINoteContent } from "./ai";
 import { renderAISettings } from "./ai-settings";
 import { AIResultModal } from "./ai-result-modal";
-import { renderShadowingToolCard } from "./shadowing-tool";
+import { renderMaterialsCard, renderShadowingToolCard } from "./shadowing-tool";
 
 const VIEW_TYPE = "one-minute-english-view";
 const HIGHLIGHTS_VIEW_TYPE = "one-minute-english-highlights-view";
@@ -1076,7 +1076,7 @@ class OneMinuteEnglishView extends ItemView {
     const brand = header.createDiv({ cls: "ome-brand" });
     const logo = brand.createSpan({ cls: "ome-brand-icon" });
     setIcon(logo, "layers-3");
-    brand.createEl("h1", { text: "One Minute English" });
+    brand.createEl("h1", { text: "一分钟口语练习" });
     const searchWrap = header.createDiv({ cls: "ome-search" });
     const searchIcon = searchWrap.createSpan();
     setIcon(searchIcon, "search");
@@ -1102,12 +1102,10 @@ class OneMinuteEnglishView extends ItemView {
   private renderStats(root: HTMLElement): void {
     const materialFiles = this.filesInFolder(this.plugin.settings.materialFolder);
     const topicFiles = this.filesInFolder(this.plugin.settings.topicFolder);
-    const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
-    const abandonedTopics = topicFiles.filter((file) => file.stat.mtime < sevenDaysAgo).length;
     const stats = root.createDiv({ cls: "ome-stats" });
     this.statCard(stats, "files", materialFiles.length, "素材数量");
     this.statCard(stats, "message-square-text", topicFiles.length, "话题数量");
-    this.statCard(stats, "clock-alert", abandonedTopics, "荒废话题", true);
+    renderMaterialsCard(stats, this.app);
     renderShadowingToolCard(stats, this.app);
   }
 

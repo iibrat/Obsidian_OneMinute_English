@@ -62,4 +62,4 @@ jobs:
             "one-minute-english-${GITHUB_REF_NAME}.zip" \
             --verify-tag \
             --title "$GITHUB_REF_NAME" \
-            --generate-notes
+            --notes-file "release-notes/${GITHUB_REF_NAME}.md"

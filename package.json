@@ -1,6 +1,6 @@
 {
   "name": "obsidian-one-minute-english",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "description": "A focused One Minute English dashboard for Obsidian.",
   "main": "main.js",
   "scripts": {
