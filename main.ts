@@ -8,6 +8,7 @@ import {
   Menu,
   Modal,
   Notice,
+  Platform,
   Plugin,
   PluginSettingTab,
   Setting,
@@ -23,11 +24,40 @@ import { AIPrompt, AIResult, AISettings, buildAINoteRequest, buildHighlightInput
 import { renderAISettings } from "./ai-settings";
 import { AIResultModal } from "./ai-result-modal";
 import { renderMaterialsCard, renderShadowingToolCard } from "./shadowing-tool";
+import { bracketToCheckbox } from "./bracket-to-checkbox";
 
 const VIEW_TYPE = "one-minute-english-view";
 const HIGHLIGHTS_VIEW_TYPE = "one-minute-english-highlights-view";
 const HIGHLIGHTS_LIBRARY_VIEW_TYPE = "one-minute-english-highlights-library-view";
-type TopicStatus = "completed";
+type MaterialStatus = "pending" | "mined" | "exhausted";
+
+interface MaterialEntry {
+  file: TFile;
+  status: MaterialStatus;
+  addedAt: number;
+  minedAt: number;
+  rounds: number;
+  seedCount: number;
+}
+
+/** 卡片摘要的最大字符数。 */
+const PREVIEW_LIMIT = 220;
+
+/** 待淘素材入库超过这个天数，卡片上就标为「等太久了」。 */
+const AGE_STALE_DAYS = 14;
+
+function stripToPreview(raw: string, limit = PREVIEW_LIMIT): string {
+  let text = raw.replace(/^---\r?\n[\s\S]*?\r?\n---[ \t]*\r?\n?/, "");
+  text = text.replace(/```[\s\S]*?```/g, " ");
+  text = text.replace(/!\[[^\]]*\]\([^)]*\)/g, " ");
+  text = text.replace(/\[([^\]]*)\]\([^)]*\)/g, "$1");
+  text = text.replace(/<\/?mark\b[^>]*>/gi, "");
+  text = text.replace(/^\s{0,3}(#{1,6}\s+|>\s?|[-*+]\s+|\d+\.\s+)/gm, "");
+  text = text.replace(/<[^>]+>/g, " ");
+  text = text.replace(/[*_~`]/g, "");
+  text = text.replace(/\s+/g, " ").trim();
+  return text.length > limit ? `${text.slice(0, limit)}…` : text;
+}
 
 function appendLinkAtBottom(content: string, link: string): string {
   if (content.split(/\r?\n/).some((line) => line.trim() === link)) return content;
@@ -65,9 +95,17 @@ interface OneMinuteEnglishSettings {
   completedValue: string;
   quickCaptureFolder: string;
   quickCaptureFilenameFormat: string;
+  speechFolder: string;
   customTabs: FolderTab[];
   highlights: HighlightNote[];
   ai: AISettings;
+  materialStatusProperty: string;
+  pendingValue: string;
+  minedValue: string;
+  exhaustedValue: string;
+  minedAtProperty: string;
+  mineRoundProperty: string;
+  bracketToCheckbox: boolean;
 }
 
 const DEFAULT_SETTINGS: OneMinuteEnglishSettings = {
@@ -78,9 +116,17 @@ const DEFAULT_SETTINGS: OneMinuteEnglishSettings = {
   completedValue: "已完成",
   quickCaptureFolder: "",
   quickCaptureFilenameFormat: "",
+  speechFolder: "",
   customTabs: [],
   highlights: [],
   ai: { providers: [], activeProviderId: "", prompts: [], defaultPromptId: "" },
+  materialStatusProperty: "素材状态",
+  pendingValue: "待淘",
+  minedValue: "已淘",
+  exhaustedValue: "淘干",
+  minedAtProperty: "上次淘的时间",
+  mineRoundProperty: "淘过轮次",
+  bracketToCheckbox: false,
 };
 
 class FolderSuggestModal extends FuzzySuggestModal<TFolder> {
@@ -247,12 +293,20 @@ export default class OneMinuteEnglishPlugin extends Plugin {
   private isOpeningStartupPage = false;
   private selectionButton: HTMLButtonElement | null = null;
   private readonly pendingAI = new Map<string, AIResultModal>();
+  private queueBar: HTMLElement | null = null;
+  private queueBarToggle: HTMLButtonElement | null = null;
+  private queueBarComplete: HTMLButtonElement | null = null;
+  private queueBarObserver: ResizeObserver | null = null;
+  private queueBarObserved: HTMLElement | null = null;
+  private queueBarFrame = 0;
+  private readonly previewCache = new Map<string, { mtime: number; text: string }>();
 
   async onload(): Promise<void> {
     await this.loadSettings();
     this.registerView(VIEW_TYPE, (leaf) => new OneMinuteEnglishView(leaf, this));
     this.registerView(HIGHLIGHTS_VIEW_TYPE, (leaf) => new HighlightsView(leaf, this));
     this.registerView(HIGHLIGHTS_LIBRARY_VIEW_TYPE, (leaf) => new HighlightsLibraryView(leaf, this));
+    this.registerEditorExtension(bracketToCheckbox(() => this.settings.bracketToCheckbox));
     this.addRibbonIcon("languages", "打开 One Minute English", () => void this.activateView());
     this.addRibbonIcon("highlighter", "打开高亮侧栏", () => void this.activateHighlightsView());
     this.addCommand({ id: "open-one-minute-english", name: "打开主页", callback: () => void this.activateView() });
@@ -267,6 +321,25 @@ export default class OneMinuteEnglishPlugin extends Plugin {
     });
     this.addCommand({ id: "open-highlights-sidebar", name: "打开高亮侧栏", callback: () => void this.activateHighlightsView() });
     this.addCommand({ id: "open-highlights-library", name: "打开高亮总览", callback: () => void this.activateHighlightsLibraryView() });
+    this.addCommand({
+      id: "toggle-material-queue",
+      name: "移出 / 回归淘金队列",
+      checkCallback: (checking) => {
+        const available = Boolean(this.activeMaterialFile());
+        if (!checking && available) void this.toggleQueueMembership();
+        return available;
+      },
+    });
+    this.addCommand({ id: "open-next-material", name: "打开队列中的下一篇素材", callback: () => void this.openNextMaterial() });
+    this.addCommand({
+      id: "mark-material-mined",
+      name: "把当前素材标记为已淘",
+      checkCallback: (checking) => {
+        const file = this.activeMaterialFile();
+        if (!checking && file) void this.setMaterialStatus(file, "mined").then(() => this.updateQueueBar());
+        return Boolean(file);
+      },
+    });
     this.registerDomEvent(document, "mouseup", (event) => {
       if (this.selectionButton?.contains(event.target as Node)) return;
       window.setTimeout(() => this.updateSelectionButton(), 0);
@@ -275,7 +348,14 @@ export default class OneMinuteEnglishPlugin extends Plugin {
     this.registerDomEvent(document, "mousedown", (event) => {
       if (!this.selectionButton?.contains(event.target as Node)) this.hideSelectionButton();
     });
-    this.registerEvent(this.app.workspace.on("active-leaf-change", () => this.hideSelectionButton()));
+    this.registerEvent(this.app.workspace.on("active-leaf-change", () => {
+      this.hideSelectionButton();
+      this.updateQueueBar();
+    }));
+    this.registerEvent(this.app.workspace.on("file-open", () => this.updateQueueBar()));
+    this.registerEvent(this.app.metadataCache.on("changed", () => this.updateQueueBar()));
+    this.registerEvent(this.app.vault.on("create", () => this.updateQueueBar()));
+    this.registerDomEvent(window, "resize", () => this.updateQueueBar());
     this.registerEvent(this.app.vault.on("rename", (file, oldPath) => void this.updateHighlightPaths(file.path, oldPath)));
     this.registerEvent(this.app.vault.on("delete", (file) => {
       void this.removeAINoteLinks(file.path, file instanceof TFolder)
@@ -286,10 +366,20 @@ export default class OneMinuteEnglishPlugin extends Plugin {
       if (this.settings.openAsStartupPage) void this.activateView();
     });
     this.registerEvent(this.app.workspace.on("layout-change", () => void this.openInEmptyLeaf()));
+    this.registerEvent(this.app.workspace.on("layout-change", () => this.updateQueueBar()));
+    this.app.workspace.onLayoutReady(() => this.updateQueueBar());
   }
 
   onunload(): void {
     this.hideSelectionButton();
+    this.queueBarObserver?.disconnect();
+    this.queueBarObserver = null;
+    this.queueBarObserved = null;
+    cancelAnimationFrame(this.queueBarFrame);
+    this.queueBar?.remove();
+    this.queueBar = null;
+    this.queueBarToggle = null;
+    this.queueBarComplete = null;
   }
 
   async activateView(): Promise<void> {
@@ -644,6 +734,7 @@ export default class OneMinuteEnglishPlugin extends Plugin {
     button.style.left = `${left}px`;
     button.style.top = `${Math.max(8, rect.top - button.offsetHeight - 8)}px`;
     button.style.visibility = "visible";
+    this.queueBar?.addClass("is-dimmed");
   }
 
   private createSelectionButton(): HTMLButtonElement {
@@ -660,6 +751,278 @@ export default class OneMinuteEnglishPlugin extends Plugin {
   private hideSelectionButton(): void {
     this.selectionButton?.remove();
     this.selectionButton = null;
+    this.queueBar?.removeClass("is-dimmed");
+  }
+
+  filesInFolder(folderPath: string): TFile[] {
+    if (!folderPath) return [];
+    const normalized = folderPath.replace(/^\/+|\/+$/g, "");
+    return this.app.vault.getMarkdownFiles().filter((file) => file.path === normalized || file.path.startsWith(`${normalized}/`));
+  }
+
+  isMaterialFile(file: TFile): boolean {
+    const folder = this.settings.materialFolder.trim().replace(/^\/+|\/+$/g, "");
+    if (!folder) return false;
+    return file.path.startsWith(`${folder}/`);
+  }
+
+  statusPropertyName(): string {
+    return this.settings.materialStatusProperty.trim() || "素材状态";
+  }
+
+  statusLabel(status: MaterialStatus): string {
+    if (status === "mined") return this.settings.minedValue.trim() || "已淘";
+    if (status === "exhausted") return this.settings.exhaustedValue.trim() || "淘干";
+    return this.settings.pendingValue.trim() || "待淘";
+  }
+
+  frontmatterText(value: unknown): string {
+    if (value === undefined || value === null) return "";
+    if (value instanceof Date) return value.toISOString().slice(0, 10);
+    if (Array.isArray(value)) return value.length ? this.frontmatterText(value[0]) : "";
+    return String(value).trim();
+  }
+
+  readMaterial(file: TFile): MaterialEntry {
+    const settings = this.settings;
+    const frontmatter = (this.app.metadataCache.getFileCache(file)?.frontmatter ?? {}) as Record<string, unknown>;
+    const rawStatus = this.frontmatterText(frontmatter[this.statusPropertyName()]).toLocaleLowerCase();
+    const minedValue = (settings.minedValue.trim() || "已淘").toLocaleLowerCase();
+    const exhaustedValue = (settings.exhaustedValue.trim() || "淘干").toLocaleLowerCase();
+    const status: MaterialStatus = rawStatus === minedValue
+      ? "mined"
+      : rawStatus === exhaustedValue
+        ? "exhausted"
+        : "pending";
+    const minedAt = Date.parse(this.frontmatterText(frontmatter[settings.minedAtProperty.trim() || "上次淘的时间"]));
+    const rounds = Number.parseInt(this.frontmatterText(frontmatter[settings.mineRoundProperty.trim() || "淘过轮次"]), 10);
+    return {
+      file,
+      status,
+      addedAt: file.stat.ctime,
+      minedAt: Number.isNaN(minedAt) ? file.stat.ctime : minedAt,
+      rounds: Number.isNaN(rounds) ? 0 : Math.max(0, rounds),
+      seedCount: settings.highlights.filter((highlight) => highlight.sourcePath === file.path).length,
+    };
+  }
+
+  materials(): MaterialEntry[] {
+    return this.filesInFolder(this.settings.materialFolder).map((file) => this.readMaterial(file));
+  }
+
+  sortMaterials(entries: MaterialEntry[]): MaterialEntry[] {
+    const order: Record<MaterialStatus, number> = { pending: 0, mined: 1, exhausted: 2 };
+    return [...entries].sort((a, b) => {
+      if (order[a.status] !== order[b.status]) return order[a.status] - order[b.status];
+      // 待淘：新收的排前面（今天的印象最深，先处理）
+      // 已淘：最久没碰的排前面，让老素材在轮转里自己浮上来
+      return a.status === "pending" ? b.addedAt - a.addedAt : a.minedAt - b.minedAt;
+    });
+  }
+
+  queueEntries(): MaterialEntry[] {
+    return this.sortMaterials(this.materials().filter((entry) => entry.status !== "exhausted"));
+  }
+
+  async setMaterialStatus(file: TFile, status: MaterialStatus): Promise<void> {
+    const settings = this.settings;
+    const minedAtProperty = settings.minedAtProperty.trim() || "上次淘的时间";
+    const roundProperty = settings.mineRoundProperty.trim() || "淘过轮次";
+    const previous = this.readMaterial(file);
+    await this.app.fileManager.processFrontMatter(file, (frontmatter) => {
+      const target = frontmatter as unknown as Record<string, unknown>;
+      target[this.statusPropertyName()] = this.statusLabel(status);
+      if (status === "mined") {
+        target[minedAtProperty] = this.formatDate(new Date(), "YYYY-MM-DD");
+        target[roundProperty] = previous.rounds + 1;
+      }
+    });
+    if (status === "mined") {
+      new Notice(`已标记：${file.basename}（第 ${previous.rounds + 1} 轮）`);
+    } else if (status === "exhausted") {
+      new Notice(`已移出队列：${file.basename}`);
+    } else {
+      new Notice(`已回归队列：${file.basename}`);
+    }
+  }
+
+  formatDate(date: Date, format: string): string {
+    const pad = (value: number): string => String(value).padStart(2, "0");
+    const values: Record<string, string> = {
+      YYYY: String(date.getFullYear()),
+      YY: String(date.getFullYear()).slice(-2),
+      MM: pad(date.getMonth() + 1),
+      M: String(date.getMonth() + 1),
+      dd: pad(date.getDate()),
+      DD: pad(date.getDate()),
+      d: String(date.getDate()),
+      D: String(date.getDate()),
+      HH: pad(date.getHours()),
+      H: String(date.getHours()),
+      mm: pad(date.getMinutes()),
+      m: String(date.getMinutes()),
+      ss: pad(date.getSeconds()),
+      s: String(date.getSeconds()),
+    };
+    return format.replace(/YYYY|YY|MM|M|dd|DD|d|D|HH|H|mm|m|ss|s/g, (token) => values[token]);
+  }
+
+  dateText(timestamp: number): string {
+    const date = new Date(timestamp);
+    const pad = (value: number): string => String(value).padStart(2, "0");
+    if (date.getFullYear() === new Date().getFullYear()) return `${date.getMonth() + 1} 月 ${date.getDate()} 日`;
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+  }
+
+  /** 入库距今的自然日差（不看具体时刻，只算跨了几天）。 */
+  addedDaysAgo(timestamp: number): number {
+    const then = new Date(timestamp);
+    then.setHours(0, 0, 0, 0);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    return Math.max(0, Math.round((today.getTime() - then.getTime()) / 86_400_000));
+  }
+
+  /** 待淘卡片上的入库年龄文案，附带是否已经「等太久」。 */
+  addedAgeText(timestamp: number): { text: string; days: number; stale: boolean } {
+    const days = this.addedDaysAgo(timestamp);
+    const text = days === 0 ? "今天入库" : days === 1 ? "昨天入库" : `入库 ${days} 天前`;
+    return { text, days, stale: days >= AGE_STALE_DAYS };
+  }
+
+  async previewText(file: TFile): Promise<string> {
+    const full = await this.previewFullText(file);
+    return full.length > PREVIEW_LIMIT ? `${full.slice(0, PREVIEW_LIMIT)}…` : full;
+  }
+
+  /** 去掉 Markdown 噪音后的全文（不截断），按文件 mtime 缓存。 */
+  private async previewFullText(file: TFile): Promise<string> {
+    const cached = this.previewCache.get(file.path);
+    if (cached && cached.mtime === file.stat.mtime) return cached.text;
+    let raw = "";
+    try {
+      raw = await this.app.vault.cachedRead(file);
+    } catch {
+      raw = "";
+    }
+    const text = stripToPreview(raw, Number.MAX_SAFE_INTEGER);
+    this.previewCache.set(file.path, { mtime: file.stat.mtime, text });
+    return text;
+  }
+
+  private activeMaterialFile(): TFile | null {
+    const view = this.app.workspace.getActiveViewOfType(MarkdownView);
+    const file = view?.file ?? null;
+    return file && this.isMaterialFile(file) ? file : null;
+  }
+
+  private createQueueBar(): HTMLElement {
+    const bar = document.body.createDiv({ cls: "ome-queue-bar is-hidden" });
+    const toggle = bar.createEl("button", { cls: "ome-queue-bar-button", text: "移出队列" });
+    toggle.addEventListener("mousedown", (event) => event.preventDefault());
+    toggle.addEventListener("click", () => void this.toggleQueueMembership());
+    const next = bar.createEl("button", { cls: "ome-queue-bar-button", text: "下一篇" });
+    next.addEventListener("mousedown", (event) => event.preventDefault());
+    next.addEventListener("click", () => void this.openNextMaterial());
+    const complete = bar.createEl("button", { cls: "ome-queue-bar-button is-primary", text: "已阅" });
+    complete.addEventListener("mousedown", (event) => event.preventDefault());
+    complete.addEventListener("click", () => void this.completeMinedAndAdvance());
+    this.queueBar = bar;
+    this.queueBarToggle = toggle;
+    this.queueBarComplete = complete;
+    return bar;
+  }
+
+  private observeQueueBarContainer(el: HTMLElement): void {
+    if (this.queueBarObserved === el) return;
+    if (!this.queueBarObserver) {
+      this.queueBarObserver = new ResizeObserver(() => {
+        cancelAnimationFrame(this.queueBarFrame);
+        this.queueBarFrame = requestAnimationFrame(() => this.updateQueueBar());
+      });
+    }
+    this.queueBarObserver.disconnect();
+    this.queueBarObserved = el;
+    this.queueBarObserver.observe(el);
+  }
+
+  updateQueueBar(): void {
+    const view = Platform.isMobile ? null : this.app.workspace.getActiveViewOfType(MarkdownView);
+    const file = view?.file ?? null;
+    if (!view || !file || !this.isMaterialFile(file)) {
+      this.queueBarObserver?.disconnect();
+      this.queueBarObserved = null;
+      this.queueBar?.addClass("is-hidden");
+      return;
+    }
+    this.observeQueueBarContainer(view.containerEl);
+    const bar = this.queueBar ?? this.createQueueBar();
+    const entry = this.readMaterial(file);
+    this.queueBarToggle?.setText(entry.status === "exhausted" ? "回归队列" : "移出队列");
+    this.queueBarComplete?.setText(entry.status === "mined" ? "再淘一轮" : "已阅");
+
+    const rect = view.containerEl.getBoundingClientRect();
+    if (rect.width < 220 || rect.height < 180) {
+      bar.addClass("is-hidden");
+      return;
+    }
+    bar.removeClass("is-hidden");
+    bar.style.visibility = "hidden";
+    const width = bar.offsetWidth;
+    const height = bar.offsetHeight;
+    // 按钮变多后，窄窗格里整条会顶出左边界，宁可先不显示。
+    if (width > rect.width - 36) {
+      bar.addClass("is-hidden");
+      return;
+    }
+    bar.style.left = `${Math.round(rect.right - width - 18)}px`;
+    bar.style.top = `${Math.round(rect.top + (rect.height - height) / 2)}px`;
+    bar.style.visibility = "visible";
+  }
+
+  async toggleQueueMembership(): Promise<void> {
+    const file = this.activeMaterialFile();
+    if (!file) {
+      new Notice("当前笔记不在素材目录里");
+      return;
+    }
+    const status: MaterialStatus = this.readMaterial(file).status === "exhausted" ? "pending" : "exhausted";
+    await this.setMaterialStatus(file, status);
+    this.updateQueueBar();
+  }
+
+  /** 标记「这一轮淘完了」：写入已淘 + 轮次 +1，然后打开队列里的下一篇。 */
+  async completeMinedAndAdvance(): Promise<void> {
+    const file = this.activeMaterialFile();
+    if (!file) {
+      new Notice("当前笔记不在素材目录里");
+      return;
+    }
+    const queue = this.queueEntries();
+    const index = queue.findIndex((entry) => entry.file.path === file.path);
+    const next = index === -1 || index === queue.length - 1 ? queue[0] : queue[index + 1];
+    await this.setMaterialStatus(file, "mined");
+    if (next && next.file.path !== file.path) {
+      await this.app.workspace.getLeaf(false).openFile(next.file);
+    }
+    this.updateQueueBar();
+  }
+
+  async openNextMaterial(): Promise<void> {
+    const current = this.activeMaterialFile();
+    const queue = this.queueEntries();
+    if (!queue.length) {
+      new Notice("淘金队列是空的");
+      return;
+    }
+    const index = current ? queue.findIndex((entry) => entry.file.path === current.path) : -1;
+    const target = index === -1 || index === queue.length - 1 ? queue[0] : queue[index + 1];
+    if (current && target.file.path === current.path) {
+      new Notice("队列里没有别的素材了");
+      return;
+    }
+    if (index === queue.length - 1) new Notice(`已回到队首：${target.file.basename}`);
+    await this.app.workspace.getLeaf(false).openFile(target.file);
   }
 
   private async updateHighlightPaths(newPath: string, oldPath: string): Promise<void> {
@@ -842,7 +1205,7 @@ class HighlightsView extends ItemView {
   private updateAIButton(button: HTMLButtonElement, id: string): void {
     const pending = this.plugin.isHighlightAIPending(id);
     setIcon(button, pending ? "loader-circle" : "sparkles");
-    button.classList.toggle("is-loading", pending);
+    button.classList.toggle("ome-ai-spinner", pending);
     button.setAttribute("aria-busy", String(pending));
     button.setAttribute("aria-label", pending ? "AI 正在生成，查看进度" : "选择 AI 提示词");
     button.title = pending ? "AI 正在生成，点击查看进度" : "AI：选择提示词生成";
@@ -979,10 +1342,11 @@ class HighlightsLibraryView extends HighlightsView {
   }
 }
 
+type HomeTab = "queue" | "exhausted" | "highlights" | "speech";
+
 class OneMinuteEnglishView extends ItemView {
-  private activeTabId = "materials";
-  private activeStatus: TopicStatus | null = null;
-  private query = "";
+  private renderToken = 0;
+  private activeTab: HomeTab = "queue";
 
   constructor(leaf: WorkspaceLeaf, private readonly plugin: OneMinuteEnglishPlugin) {
     super(leaf);
@@ -1004,13 +1368,262 @@ class OneMinuteEnglishView extends ItemView {
     const root = this.contentEl;
     root.empty();
     root.addClass("ome-page");
+    this.renderToken += 1;
     this.renderHeader(root);
-    this.renderStats(root);
-    const columns = root.createDiv({ cls: "ome-columns" });
-    this.renderMaterials(columns.createDiv({ cls: "ome-panel ome-material-panel" }));
-    this.renderTopics(columns.createDiv({ cls: "ome-panel ome-topic-panel" }));
-    root.createDiv({ cls: "ome-bottom-spacer", attr: { "aria-hidden": "true" } });
+
+    const hasMaterialFolder = Boolean(this.plugin.settings.materialFolder.trim());
+    const all = hasMaterialFolder ? this.plugin.materials() : [];
+    const queue = this.plugin.sortMaterials(all.filter((entry) => entry.status !== "exhausted"));
+    const exhausted = all
+      .filter((entry) => entry.status === "exhausted")
+      .sort((a, b) => b.addedAt - a.addedAt);
+    const highlights = [...this.plugin.settings.highlights].sort((a, b) => b.createdAt - a.createdAt);
+    const speech = this.speechFiles();
+
+    this.renderTabs(root, {
+      queue: queue.length,
+      exhausted: exhausted.length,
+      highlights: highlights.length,
+      speech: speech.length,
+    });
+
+    if (this.activeTab === "speech") {
+      if (!this.plugin.settings.speechFolder.trim()) {
+        this.renderNotice(root, "请先在 One Minute English 设置中配置“一分钟口语目录”。", "folder-open");
+      } else {
+        this.renderHint(root, [`共 ${speech.length} 篇`]);
+        this.renderSpeechGrid(root, speech);
+      }
+      this.renderQuickCaptureButton(root);
+      return;
+    }
+
+    if (!hasMaterialFolder) {
+      this.renderNotice(root, "请先在 One Minute English 设置中配置“素材目录”。", "folder-open");
+      this.renderFooter(root);
+      this.renderQuickCaptureButton(root);
+      return;
+    }
+
+    if (this.activeTab === "highlights") {
+      const sources = new Set(highlights.map((highlight) => highlight.sourcePath)).size;
+      this.renderHint(root, [`共 ${highlights.length} 条`, `来自 ${sources} 篇笔记`]);
+      this.renderHighlightGrid(root, highlights);
+      this.renderQuickCaptureButton(root);
+      return;
+    }
+
+    if (this.activeTab === "queue") {
+      const pendingEntries = queue.filter((entry) => entry.status === "pending");
+      const minedCount = queue.length - pendingEntries.length;
+      const oldestDays = pendingEntries.length
+        ? this.plugin.addedDaysAgo(pendingEntries[pendingEntries.length - 1].addedAt)
+        : 0;
+      const parts = [`待淘 ${pendingEntries.length} 篇 · 新收的排前面`];
+      if (oldestDays >= AGE_STALE_DAYS) parts.push(`最老已等 ${oldestDays} 天`);
+      parts.push(minedCount > 0 ? `已淘 ${minedCount} 篇 · 最久没碰的优先` : "还没有已淘的素材");
+      this.renderHint(root, parts);
+      this.renderCardGrid(root, queue, {
+        markCurrent: true,
+        emptyText: "队列里没有素材了。往素材目录加一篇，或把标记为“淘干”的笔记改回“待淘”。",
+        emptyIcon: "check-check",
+      });
+    } else {
+      this.renderHint(root, [
+        `共 ${exhausted.length} 篇`,
+        "在笔记属性里把「素材状态」改回「待淘」即可重新入队",
+      ]);
+      this.renderCardGrid(root, exhausted, {
+        markCurrent: false,
+        emptyText: "没有移出队列的素材。阅读时点右下角「移出队列」，那篇就会收到这里。",
+        emptyIcon: "archive",
+      });
+    }
+
+    this.renderFooter(root);
     this.renderQuickCaptureButton(root);
+  }
+
+  private renderTabs(root: HTMLElement, counts: Record<HomeTab, number>): void {
+    const bar = root.createDiv({ cls: "ome-home-tabs" });
+    const tabs: { id: HomeTab; label: string; iconName: string }[] = [
+      { id: "queue", label: "队列中", iconName: "list-ordered" },
+      { id: "exhausted", label: "不在队列", iconName: "archive" },
+      { id: "highlights", label: "高亮笔记", iconName: "highlighter" },
+      { id: "speech", label: "一分钟口语", iconName: "mic" },
+    ];
+    tabs.forEach((tab) => {
+      const button = bar.createEl("button", { cls: `ome-home-tab${this.activeTab === tab.id ? " is-active" : ""}` });
+      const icon = button.createSpan({ cls: "ome-home-tab-icon" });
+      setIcon(icon, tab.iconName);
+      button.createSpan({ cls: "ome-home-tab-label", text: tab.label });
+      button.createSpan({ cls: "ome-home-tab-count", text: String(counts[tab.id]) });
+      button.addEventListener("click", () => {
+        if (this.activeTab === tab.id) return;
+        this.activeTab = tab.id;
+        this.render();
+      });
+    });
+  }
+
+  private renderHighlightGrid(root: HTMLElement, highlights: HighlightNote[]): void {
+    if (!highlights.length) {
+      this.renderNotice(root, "还没有高亮。在笔记里选中文字，点选区上方的「加入高亮」即可收集。", "highlighter");
+      return;
+    }
+    const wrap = root.createDiv({ cls: "ome-grid-wrap" });
+    const grid = wrap.createDiv({ cls: "ome-card-grid" });
+    highlights.forEach((highlight) => {
+      const card = grid.createDiv({ cls: "ome-note-card is-highlight" });
+      card.setAttr("title", highlight.sourcePath);
+      card.createDiv({ cls: "ome-note-card-quote", text: highlight.text });
+      if (highlight.note.trim()) {
+        card.createDiv({ cls: "ome-note-card-note", text: highlight.note });
+      }
+      const meta = card.createDiv({ cls: "ome-note-card-meta" });
+      meta.createSpan({ text: this.sourceName(highlight.sourcePath) });
+      meta.createSpan({ text: this.plugin.dateText(highlight.createdAt) });
+      card.addEventListener("click", () => void this.openHighlightSource(highlight));
+    });
+  }
+
+  private sourceName(path: string): string {
+    return path.split("/").pop()?.replace(/\.md$/i, "") ?? path;
+  }
+
+  /** 一分钟口语目录下的成品稿，最近改动的排最前。 */
+  private speechFiles(): TFile[] {
+    return this.plugin
+      .filesInFolder(this.plugin.settings.speechFolder)
+      .sort((a, b) => b.stat.mtime - a.stat.mtime);
+  }
+
+  private renderSpeechGrid(root: HTMLElement, files: TFile[]): void {
+    if (!files.length) {
+      this.renderNotice(root, "这个目录里还没有 Markdown 文档。把写好的一分钟口语文稿放进来，或点右下角 + 新建。", "mic");
+      return;
+    }
+    const wrap = root.createDiv({ cls: "ome-grid-wrap" });
+    const grid = wrap.createDiv({ cls: "ome-card-grid" });
+    const token = this.renderToken;
+    files.forEach((file) => {
+      const card = grid.createDiv({ cls: "ome-note-card is-speech" });
+      card.setAttr("title", file.path);
+      card.createDiv({ cls: "ome-note-card-head" }).createEl("h3", { text: file.basename });
+
+      const body = card.createDiv({ cls: "ome-note-card-body", text: "读取中…" });
+      const meta = card.createDiv({ cls: "ome-note-card-meta" });
+      meta.createSpan({ text: this.plugin.dateText(file.stat.mtime) });
+
+      void this.plugin.previewText(file).then((preview) => {
+        if (token !== this.renderToken || !body.isConnected) return;
+        body.setText(preview || "（空笔记）");
+      });
+
+      card.addEventListener("click", () => void this.app.workspace.getLeaf(false).openFile(file));
+    });
+  }
+
+  private async openHighlightSource(highlight: HighlightNote): Promise<void> {
+    const file = this.app.vault.getAbstractFileByPath(highlight.sourcePath);
+    if (!(file instanceof TFile)) {
+      new Notice("找不到高亮来源笔记，可能已被移动或删除");
+      return;
+    }
+    await this.app.workspace.getLeaf(false).openFile(file);
+    const markdownView = this.app.workspace.getActiveViewOfType(MarkdownView);
+    if (!markdownView) return;
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      const target = markdownView.containerEl.querySelector<HTMLElement>(
+        `.ome-note-highlight[data-ome-highlight-id="${highlight.id}"]`,
+      );
+      if (target) {
+        target.scrollIntoView({ behavior: "smooth", block: "center" });
+        return;
+      }
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 50));
+    }
+  }
+
+  private renderHeader(root: HTMLElement): void {
+    const header = root.createDiv({ cls: "ome-header ome-home-header" });
+    const brand = header.createDiv({ cls: "ome-brand" });
+    const logo = brand.createSpan({ cls: "ome-brand-icon" });
+    setIcon(logo, "layers-3");
+    brand.createEl("h1", { text: "一分钟表达练习" });
+    const settings = header.createEl("button", { cls: "ome-icon-button", attr: { "aria-label": "打开设置" } });
+    setIcon(settings, "settings");
+    settings.addEventListener("click", () => {
+      const appWithSettings = this.app as App & { setting: { open(): void; openTabById(id: string): void } };
+      appWithSettings.setting.open();
+      appWithSettings.setting.openTabById(this.plugin.manifest.id);
+    });
+  }
+
+  private renderCardGrid(
+    root: HTMLElement,
+    entries: MaterialEntry[],
+    options: { markCurrent: boolean; emptyText: string; emptyIcon: string },
+  ): void {
+    if (!entries.length) {
+      this.renderNotice(root, options.emptyText, options.emptyIcon);
+      return;
+    }
+    const wrap = root.createDiv({ cls: "ome-grid-wrap" });
+    const grid = wrap.createDiv({ cls: "ome-card-grid" });
+    const token = this.renderToken;
+    entries.forEach((entry, index) => {
+      const isCurrent = options.markCurrent && index === 0;
+      const card = grid.createDiv({ cls: `ome-note-card${isCurrent ? " is-current" : ""}` });
+      card.setAttr("title", entry.file.path);
+
+      const head = card.createDiv({ cls: "ome-note-card-head" });
+      head.createEl("h3", { text: entry.file.basename });
+
+      const body = card.createDiv({ cls: "ome-note-card-body", text: "读取中…" });
+      void this.plugin.previewText(entry.file).then((text) => {
+        if (token !== this.renderToken || !body.isConnected) return;
+        body.setText(text || "（空笔记）");
+      });
+
+      const meta = card.createDiv({ cls: "ome-note-card-meta" });
+      meta.createSpan({ cls: `ome-badge ome-badge-${entry.status}`, text: this.plugin.statusLabel(entry.status) });
+      if (entry.status === "mined") {
+        meta.createSpan({
+          text: entry.rounds > 0
+            ? `第 ${entry.rounds} 轮 · 上次 ${this.plugin.dateText(entry.minedAt)}`
+            : `上次 ${this.plugin.dateText(entry.minedAt)}`,
+        });
+      } else {
+        const age = this.plugin.addedAgeText(entry.addedAt);
+        meta.createSpan({ cls: `ome-age${age.stale ? " is-stale" : ""}`, text: age.text });
+      }
+      if (entry.seedCount) meta.createSpan({ text: `${entry.seedCount} 处种子` });
+
+      card.addEventListener("click", () => void this.app.workspace.getLeaf(false).openFile(entry.file));
+    });
+  }
+
+  private renderHint(root: HTMLElement, parts: string[]): void {
+    const summary = root.createDiv({ cls: "ome-queue-summary" });
+    parts.forEach((text, index) => {
+      if (index > 0) summary.createSpan({ cls: "ome-queue-dot", text: "·" });
+      summary.createSpan({ text });
+    });
+  }
+
+  private renderNotice(parent: HTMLElement, text: string, iconName: string): void {
+    const empty = parent.createDiv({ cls: "ome-empty ome-home-empty" });
+    const icon = empty.createSpan();
+    setIcon(icon, iconName);
+    empty.createDiv({ text });
+  }
+
+  private renderFooter(root: HTMLElement): void {
+    const footer = root.createDiv({ cls: "ome-home-footer" });
+    renderMaterialsCard(footer, this.app);
+    renderShadowingToolCard(footer, this.app);
+    root.createDiv({ cls: "ome-bottom-spacer", attr: { "aria-hidden": "true" } });
   }
 
   private renderQuickCaptureButton(root: HTMLElement): void {
@@ -1035,7 +1648,7 @@ class OneMinuteEnglishView extends ItemView {
       new Notice("配置的快速记录目录不存在，请重新选择");
       return;
     }
-    const formatted = this.formatDate(new Date(), this.plugin.settings.quickCaptureFilenameFormat);
+    const formatted = this.plugin.formatDate(new Date(), this.plugin.settings.quickCaptureFilenameFormat);
     const safeName = formatted.replace(/[\\/:*?"<>|]/g, "-").trim();
     if (!safeName) {
       new Notice("文件名时间格式无法生成有效文件名，请重新配置");
@@ -1052,253 +1665,6 @@ class OneMinuteEnglishView extends ItemView {
     await this.app.workspace.getLeaf(false).openFile(file);
   }
 
-  private formatDate(date: Date, format: string): string {
-    const pad = (value: number): string => String(value).padStart(2, "0");
-    const values: Record<string, string> = {
-      YYYY: String(date.getFullYear()),
-      YY: String(date.getFullYear()).slice(-2),
-      MM: pad(date.getMonth() + 1),
-      M: String(date.getMonth() + 1),
-      dd: pad(date.getDate()),
-      d: String(date.getDate()),
-      HH: pad(date.getHours()),
-      H: String(date.getHours()),
-      mm: pad(date.getMinutes()),
-      m: String(date.getMinutes()),
-      ss: pad(date.getSeconds()),
-      s: String(date.getSeconds()),
-    };
-    return format.replace(/YYYY|YY|MM|M|dd|d|HH|H|mm|m|ss|s/g, (token) => values[token]);
-  }
-
-  private renderHeader(root: HTMLElement): void {
-    const header = root.createDiv({ cls: "ome-header" });
-    const brand = header.createDiv({ cls: "ome-brand" });
-    const logo = brand.createSpan({ cls: "ome-brand-icon" });
-    setIcon(logo, "layers-3");
-    brand.createEl("h1", { text: "一分钟口语练习" });
-    const searchWrap = header.createDiv({ cls: "ome-search" });
-    const searchIcon = searchWrap.createSpan();
-    setIcon(searchIcon, "search");
-    const input = searchWrap.createEl("input", { type: "search", placeholder: "搜索素材或话题…", value: this.query });
-    input.addEventListener("input", () => {
-      this.query = input.value;
-      this.render();
-      const nextInput = this.contentEl.querySelector<HTMLInputElement>(".ome-search input");
-      if (nextInput) {
-        nextInput.focus();
-        nextInput.setSelectionRange(this.query.length, this.query.length);
-      }
-    });
-    const settings = header.createEl("button", { cls: "ome-icon-button", attr: { "aria-label": "打开设置" } });
-    setIcon(settings, "settings");
-    settings.addEventListener("click", () => {
-      const appWithSettings = this.app as App & { setting: { open(): void; openTabById(id: string): void } };
-      appWithSettings.setting.open();
-      appWithSettings.setting.openTabById(this.plugin.manifest.id);
-    });
-  }
-
-  private renderStats(root: HTMLElement): void {
-    const materialFiles = this.filesInFolder(this.plugin.settings.materialFolder);
-    const topicFiles = this.filesInFolder(this.plugin.settings.topicFolder);
-    const stats = root.createDiv({ cls: "ome-stats" });
-    this.statCard(stats, "files", materialFiles.length, "素材数量");
-    this.statCard(stats, "message-square-text", topicFiles.length, "话题数量");
-    renderMaterialsCard(stats, this.app);
-    renderShadowingToolCard(stats, this.app);
-  }
-
-  private statCard(parent: HTMLElement, iconName: string, value: number, label: string, danger = false): void {
-    const card = parent.createDiv({ cls: `ome-stat-card${danger ? " is-danger" : ""}` });
-    const icon = card.createSpan({ cls: "ome-stat-icon" });
-    setIcon(icon, iconName);
-    const copy = card.createDiv();
-    copy.createDiv({ cls: "ome-stat-value", text: String(value) });
-    copy.createDiv({ cls: "ome-stat-label", text: label });
-  }
-
-  private renderMaterials(panel: HTMLElement): void {
-    const tabs = panel.createDiv({ cls: "ome-tabs" });
-    this.renderTab(tabs, { id: "materials", name: "素材", path: this.plugin.settings.materialFolder }, false);
-    this.plugin.settings.customTabs.forEach((tab) => this.renderTab(tabs, tab, true));
-    const add = tabs.createEl("button", { cls: "ome-tab-add", attr: { "aria-label": "添加目录标签" } });
-    setIcon(add, "plus");
-    add.addEventListener("click", () => {
-      new FolderSuggestModal(this.app, (folder) => void this.addFolderTab(folder)).open();
-    });
-
-    const selected = this.activeTabId === "materials"
-      ? { id: "materials", name: "素材", path: this.plugin.settings.materialFolder }
-      : this.plugin.settings.customTabs.find((tab) => tab.id === this.activeTabId) ?? { id: "materials", name: "素材", path: this.plugin.settings.materialFolder };
-    const body = panel.createDiv({ cls: "ome-panel-body" });
-    const title = body.createDiv({ cls: "ome-panel-title" });
-    const titleIcon = title.createSpan();
-    setIcon(titleIcon, "folder-open");
-    title.createEl("h2", { text: selected.name });
-    const files = this.searchFiles(this.filesInFolder(selected.path));
-    title.createSpan({ cls: "ome-count", text: String(files.length) });
-    this.renderFileList(body, files, "该目录中没有 Markdown 文档");
-  }
-
-  private renderTab(parent: HTMLElement, tab: FolderTab, removable: boolean): void {
-    const button = parent.createEl("button", { cls: `ome-tab${this.activeTabId === tab.id ? " is-active" : ""}` });
-    button.createSpan({ text: tab.name });
-    button.addEventListener("click", () => { this.activeTabId = tab.id; this.render(); });
-    if (removable) {
-      const remove = button.createSpan({ cls: "ome-tab-remove", attr: { "aria-label": `删除 ${tab.name}` } });
-      setIcon(remove, "x");
-      remove.addEventListener("click", (event) => {
-        event.stopPropagation();
-        void this.removeFolderTab(tab.id);
-      });
-    }
-  }
-
-  private async addFolderTab(folder: TFolder): Promise<void> {
-    if (this.plugin.settings.customTabs.some((tab) => tab.path === folder.path)) {
-      new Notice("这个目录已经添加过了");
-      return;
-    }
-    const tab: FolderTab = { id: `${Date.now()}-${folder.path}`, name: folder.name, path: folder.path };
-    this.plugin.settings.customTabs.push(tab);
-    this.activeTabId = tab.id;
-    await this.plugin.saveSettings();
-  }
-
-  private async removeFolderTab(id: string): Promise<void> {
-    this.plugin.settings.customTabs = this.plugin.settings.customTabs.filter((tab) => tab.id !== id);
-    if (this.activeTabId === id) this.activeTabId = "materials";
-    await this.plugin.saveSettings();
-  }
-
-  private renderTopics(panel: HTMLElement): void {
-    const heading = panel.createDiv({ cls: "ome-topic-heading" });
-    const title = heading.createDiv({ cls: "ome-panel-title" });
-    const icon = title.createSpan();
-    setIcon(icon, "list-todo");
-    title.createEl("h2", { text: "话题列表" });
-    const tags = heading.createDiv({ cls: "ome-status-tags" });
-    const allButton = tags.createEl("button", {
-      cls: `ome-status-tag${this.activeStatus === null ? " is-active" : ""}`,
-      text: "未编辑",
-    });
-    allButton.addEventListener("click", () => {
-      this.activeStatus = null;
-      this.render();
-    });
-    this.statusButton(tags, "completed", "已完成");
-
-    let files = this.filesInFolder(this.plugin.settings.topicFolder);
-    files = this.activeStatus
-      ? this.filterByStatus(files, this.activeStatus, true)
-      : this.filterUnedited(files);
-    files = this.searchFiles(files);
-    title.createSpan({ cls: "ome-count", text: String(files.length) });
-    this.renderFileList(panel, files, "没有符合条件的话题");
-  }
-
-  private statusButton(parent: HTMLElement, status: TopicStatus, text: string): void {
-    const button = parent.createEl("button", { cls: `ome-status-tag ome-status-${status}${this.activeStatus === status ? " is-active" : ""}`, text });
-    button.addEventListener("click", () => {
-      if (!this.hasStatusConfiguration(status)) {
-        new Notice(`请先在 One Minute English 设置中配置“状态属性”和“${text}”对应值`);
-        return;
-      }
-      this.activeStatus = this.activeStatus === status ? null : status;
-      this.render();
-    });
-  }
-
-  private renderFileList(parent: HTMLElement, files: TFile[], emptyText: string): void {
-    const list = parent.createDiv({ cls: "ome-file-list" });
-    if (!files.length) {
-      const empty = list.createDiv({ cls: "ome-empty" });
-      const icon = empty.createSpan();
-      setIcon(icon, "file-search");
-      empty.createDiv({ text: emptyText });
-      return;
-    }
-    files.sort((a, b) => b.stat.mtime - a.stat.mtime).forEach((file) => {
-      const row = list.createDiv({ cls: "ome-file-row" });
-      const fileIcon = row.createSpan({ cls: "ome-file-icon" });
-      setIcon(fileIcon, "file-text");
-      const details = row.createDiv({ cls: "ome-file-details" });
-      details.createDiv({ cls: "ome-file-name", text: file.basename });
-      const meta = details.createDiv({ cls: "ome-file-meta" });
-      meta.createSpan({ text: this.relativeTime(file.stat.mtime) });
-      meta.createSpan({ cls: "ome-md-badge", text: ".md" });
-      const folder = file.parent?.path && file.parent.path !== "/" ? file.parent.path : "根目录";
-      meta.createSpan({ text: folder });
-      const open = row.createEl("button", { cls: "ome-open-file", attr: { "aria-label": `打开 ${file.basename}` } });
-      setIcon(open, "square-pen");
-      const openFile = () => void this.app.workspace.getLeaf(false).openFile(file);
-      row.addEventListener("click", openFile);
-      open.addEventListener("click", (event) => { event.stopPropagation(); openFile(); });
-    });
-  }
-
-  private filesInFolder(folderPath: string): TFile[] {
-    if (!folderPath) return [];
-    const normalized = folderPath.replace(/^\/+|\/+$/g, "");
-    return this.app.vault.getMarkdownFiles().filter((file) => file.path === normalized || file.path.startsWith(`${normalized}/`));
-  }
-
-  private searchFiles(files: TFile[]): TFile[] {
-    const query = this.query.trim().toLocaleLowerCase();
-    if (!query) return files;
-    return files.filter((file) => file.basename.toLocaleLowerCase().includes(query) || file.path.toLocaleLowerCase().includes(query));
-  }
-
-  private hasStatusConfiguration(status: TopicStatus): boolean {
-    return Boolean(this.plugin.settings.statusProperty.trim() && this.statusValue(status).trim());
-  }
-
-  private statusValue(status: TopicStatus): string {
-    return this.plugin.settings[`${status}Value`];
-  }
-
-  private filterByStatus(files: TFile[], status: TopicStatus, warn: boolean): TFile[] {
-    if (!this.hasStatusConfiguration(status)) {
-      if (warn) new Notice("请先配置用于区分话题状态的文档属性");
-      return [];
-    }
-    const property = this.plugin.settings.statusProperty;
-    const expected = this.statusValue(status).toLocaleLowerCase();
-    return files.filter((file) => {
-      const value: unknown = this.app.metadataCache.getFileCache(file)?.frontmatter?.[property];
-      if (Array.isArray(value)) return value.some((item) => String(item).toLocaleLowerCase() === expected);
-      return value !== undefined && String(value).toLocaleLowerCase() === expected;
-    });
-  }
-
-  private filterUnedited(files: TFile[]): TFile[] {
-    const property = this.plugin.settings.statusProperty.trim() || "状态";
-    return files.filter((file) => {
-      const value: unknown = this.app.metadataCache.getFileCache(file)?.frontmatter?.[property];
-      if (value === undefined || value === null) return true;
-      if (Array.isArray(value)) {
-        return value.length === 0 || value.some((item) => {
-          const normalized = String(item ?? "").trim().toLocaleLowerCase();
-          return normalized === "" || normalized === "未处理";
-        });
-      }
-      const normalized = String(value).trim().toLocaleLowerCase();
-      return normalized === "" || normalized === "未处理";
-    });
-  }
-
-  private relativeTime(timestamp: number): string {
-    const seconds = Math.max(0, Math.floor((Date.now() - timestamp) / 1000));
-    if (seconds < 60) return "刚刚";
-    const minutes = Math.floor(seconds / 60);
-    if (minutes < 60) return `${minutes} 分钟前`;
-    const hours = Math.floor(minutes / 60);
-    if (hours < 24) return `${hours} 小时前`;
-    const days = Math.floor(hours / 24);
-    if (days < 30) return `${days} 天前`;
-    return new Date(timestamp).toLocaleDateString("zh-CN");
-  }
 }
 
 class OneMinuteEnglishSettingTab extends PluginSettingTab {
@@ -1337,10 +1703,18 @@ class OneMinuteEnglishSettingTab extends PluginSettingTab {
         await this.plugin.saveSettings();
         if (value) await this.plugin.activateView();
       }));
+    new Setting(containerEl)
+      .setName("方括号转待办")
+      .setDesc("编辑笔记时在行首输入 [] 再按空格，自动换成待办复选框 - [ ]。已有列表符号和缩进会保留，行中间的 [] 不转换。")
+      .addToggle((toggle) => toggle.setValue(this.plugin.settings.bracketToCheckbox).onChange(async (value) => {
+        this.plugin.settings.bracketToCheckbox = value;
+        await this.plugin.saveSettings();
+      }));
     containerEl.createEl("p", { cls: "setting-item-description", text: "目录路径均相对于当前 Obsidian 库；列表会自动包含所有子目录中的 Markdown 文档。" });
     this.folderSetting("素材目录", "主页“素材”标签加载的目录。", "materialFolder");
-    this.folderSetting("话题目录", "话题列表加载的目录，也是 AI 生成笔记和高亮转笔记的保存位置。", "topicFolder");
+    this.folderSetting("话题目录", "侧栏高亮卡片上「转成笔记」和「AI 生成」产出的笔记保存到这里。", "topicFolder");
     this.folderSetting("快速记录目录", "右下角 + 按钮创建的 Markdown 文档保存到这里。", "quickCaptureFolder");
+    this.folderSetting("一分钟口语目录", "主页“一分钟口语”标签加载的目录，存放写好的成品稿。", "speechFolder");
     new Setting(containerEl)
       .setName("文件名时间格式")
       .setDesc("快速记录的文件名格式。支持 YYYY、YY、MM、M、dd、d、HH、H、mm、m、ss、s，例如：YYYY年MM月dd日。")
@@ -1356,9 +1730,39 @@ class OneMinuteEnglishSettingTab extends PluginSettingTab {
         await this.plugin.saveSettings();
       }));
     this.valueSetting("“已完成”对应值", "completedValue", "已完成");
+
+    containerEl.createEl("h3", { text: "素材状态" });
+    containerEl.createEl("p", {
+      cls: "setting-item-description",
+      text: "状态写在素材笔记的 Frontmatter / Properties 里，没有该属性的笔记视为“待淘”。待淘排队列最前，已淘排最后但会再次轮到，淘干不进入队列。",
+    });
+    new Setting(containerEl)
+      .setName("素材状态属性")
+      .setDesc("记录素材状态的属性名。")
+      .addText((text) => text.setPlaceholder("素材状态").setValue(this.plugin.settings.materialStatusProperty).onChange(async (value) => {
+        this.plugin.settings.materialStatusProperty = value.trim();
+        await this.plugin.saveSettings();
+      }));
+    this.valueSetting("“待淘”对应值", "pendingValue", "待淘");
+    this.valueSetting("“已淘”对应值", "minedValue", "已淘");
+    this.valueSetting("“淘干”对应值", "exhaustedValue", "淘干");
+    new Setting(containerEl)
+      .setName("上次淘的时间属性")
+      .setDesc("已淘的素材按这个属性排序，最久没碰的排在最前面。")
+      .addText((text) => text.setPlaceholder("上次淘的时间").setValue(this.plugin.settings.minedAtProperty).onChange(async (value) => {
+        this.plugin.settings.minedAtProperty = value.trim();
+        await this.plugin.saveSettings();
+      }));
+    new Setting(containerEl)
+      .setName("淘过轮次属性")
+      .setDesc("每点一次「已阅」就加一。")
+      .addText((text) => text.setPlaceholder("淘过轮次").setValue(this.plugin.settings.mineRoundProperty).onChange(async (value) => {
+        this.plugin.settings.mineRoundProperty = value.trim();
+        await this.plugin.saveSettings();
+      }));
   }
 
-  private folderSetting(name: string, description: string, key: "materialFolder" | "topicFolder" | "quickCaptureFolder"): void {
+  private folderSetting(name: string, description: string, key: "materialFolder" | "topicFolder" | "quickCaptureFolder" | "speechFolder"): void {
     new Setting(this.containerEl)
       .setName(name)
       .setDesc(description)
@@ -1374,7 +1778,11 @@ class OneMinuteEnglishSettingTab extends PluginSettingTab {
       }));
   }
 
-  private valueSetting(name: string, key: "completedValue", placeholder: string): void {
+  private valueSetting(
+    name: string,
+    key: "completedValue" | "pendingValue" | "minedValue" | "exhaustedValue",
+    placeholder: string,
+  ): void {
     new Setting(this.containerEl)
       .setName(name)
       .setDesc("该属性为此值时归入对应标签；也支持属性值为列表。")

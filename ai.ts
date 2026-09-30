@@ -1,4 +1,4 @@
-import { SPEAKING_PROMPT } from "./ai-prompts";
+import { LEGACY_SPEAKING_PROMPT, RETELLING_VIEWPOINT_PROMPT } from "./ai-prompts";
 
 export type ThinkingFormat = "deepseek" | "reasoning-effort" | "none";
 export type ThinkingEffort = "low" | "medium" | "high" | "xhigh" | "max";
@@ -86,11 +86,21 @@ export function normalizeAISettings(value: unknown): AISettings {
       content: stringOr(item.content, ""),
     }))
     : [];
-  if (saved.builtinPromptVersion !== 1 && !prompts.some((prompt) => prompt.id === SPEAKING_PROMPT.id || prompt.name === SPEAKING_PROMPT.name)) {
-    prompts.push({ ...SPEAKING_PROMPT });
+  if (saved.builtinPromptVersion === undefined && !prompts.some((prompt) => prompt.id === LEGACY_SPEAKING_PROMPT.id || prompt.name === LEGACY_SPEAKING_PROMPT.name)) {
+    prompts.push({ ...RETELLING_VIEWPOINT_PROMPT });
+  }
+  if (saved.builtinPromptVersion === 1) {
+    const legacyIndex = prompts.findIndex((prompt) => prompt.id === LEGACY_SPEAKING_PROMPT.id
+      && prompt.name === LEGACY_SPEAKING_PROMPT.name);
+    if (legacyIndex >= 0) prompts[legacyIndex] = { ...RETELLING_VIEWPOINT_PROMPT };
+  }
+  if (saved.builtinPromptVersion === 2) {
+    const retellingIndex = prompts.findIndex((prompt) => prompt.id === RETELLING_VIEWPOINT_PROMPT.id
+      && prompt.name === RETELLING_VIEWPOINT_PROMPT.name);
+    if (retellingIndex >= 0) prompts[retellingIndex] = { ...RETELLING_VIEWPOINT_PROMPT };
   }
   return {
-    builtinPromptVersion: 1,
+    builtinPromptVersion: 3,
     providers,
     activeProviderId: providers.find((provider) => provider.id === saved.activeProviderId)?.id ?? providers[0]?.id ?? "",
     prompts,

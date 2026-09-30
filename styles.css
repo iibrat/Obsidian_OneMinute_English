@@ -57,10 +57,20 @@
 .ome-shadowing-modal-content { text-align: center; }
 .ome-shadowing-qr { display: block; width: 258px; height: auto; max-width: 100%; margin: 8px auto 20px; background: #fff; }
 
-.ome-columns { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: start; gap: 18px; }
+.ome-columns { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr); align-items: start; gap: 18px; }
 .ome-panel { min-width: 0; display: flex; flex-direction: column; overflow: visible; }
 .ome-material-panel { padding: 18px; }
 .ome-material-panel .ome-panel-body { padding-top: 12px; overflow: visible; display: flex; flex-direction: column; }
+.ome-highlight-panel { padding: 18px; }
+.ome-dash-highlight-list { display: flex; flex-direction: column; gap: 10px; padding-top: 10px; }
+.ome-dash-highlight-card { border: 1px solid var(--ome-border); border-radius: 10px; padding: 12px 14px; display: flex; flex-direction: column; gap: 9px; cursor: pointer; transition: background 120ms ease, border-color 120ms ease; }
+.ome-dash-highlight-card:hover { background: var(--background-modifier-hover); border-color: var(--background-modifier-border-hover); }
+.ome-dash-highlight-body { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.ome-dash-highlight-text { font-size: 13px; line-height: 1.6; color: var(--text-normal); display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
+.ome-dash-highlight-note { font-size: 12px; line-height: 1.55; color: var(--text-muted); border-left: 2px solid var(--ome-accent); padding-left: 9px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.ome-dash-highlight-meta { display: flex; align-items: center; gap: 9px; color: var(--text-faint); font-size: 11px; min-width: 0; }
+.ome-dash-highlight-meta span:first-child { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ome-dash-highlight-meta span:last-child { flex: 0 0 auto; }
 
 .ome-tabs { min-height: 42px; display: flex; align-items: end; border-bottom: 1px solid var(--ome-border); gap: 3px; overflow-x: auto; flex: 0 0 auto; }
 .ome-tab, .ome-tab-add { flex: 0 0 auto; height: 34px; border: 0; border-radius: 7px 7px 0 0; background: transparent !important; box-shadow: none !important; color: var(--text-muted); padding: 0 11px; display: flex; align-items: center; gap: 7px; }
@@ -201,7 +211,7 @@ mark.ome-note-highlight {
 }
 .ome-open-highlights-library:hover { color: var(--text-accent); background: var(--background-modifier-hover) !important; }
 .ome-open-highlights-library svg { width: 17px; height: 17px; }
-.ome-highlights-hint { margin: 8px 0 14px; color: var(--text-muted); font-size: 12px; line-height: 1.5; }
+.ome-highlights-hint { margin: 8px 0 14px; color: var(--text-muted); font-size: 13px; line-height: 1.5; }
 .ome-highlight-list { display: flex; flex-direction: column; gap: 10px; }
 .ome-highlight-card {
   padding: 12px;
@@ -223,8 +233,8 @@ mark.ome-note-highlight {
   min-width: 0;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  font-size: 13px;
-  line-height: 1.65;
+  font-size: 15px;
+  line-height: 1.7;
 }
 .ome-highlight-create-note,
 .ome-highlight-ai,
@@ -245,7 +255,7 @@ mark.ome-note-highlight {
 .ome-highlight-create-note:hover { color: var(--text-accent); background: var(--background-modifier-hover) !important; }
 .ome-highlight-ai { color: var(--text-accent); }
 .ome-highlight-ai:hover { background: var(--background-modifier-hover) !important; }
-.ome-highlight-ai.is-loading svg { animation: ome-ai-loading-spin 1s linear infinite; transform-origin: center; }
+.ome-highlight-ai.ome-ai-spinner svg { animation: ome-ai-loading-spin 1s linear infinite; transform-origin: center; }
 @keyframes ome-ai-loading-spin { to { transform: rotate(360deg); } }
 .ome-highlight-delete { margin-right: auto; }
 .ome-highlight-delete:hover { color: var(--text-error); background: var(--background-modifier-error) !important; }
@@ -262,14 +272,14 @@ mark.ome-note-highlight {
   background: transparent !important;
   box-shadow: none !important;
   color: var(--text-faint);
-  font-size: 11px;
+  font-size: 13px;
   text-align: left;
   text-overflow: ellipsis;
   white-space: nowrap;
   cursor: pointer;
 }
 .ome-highlight-source:hover { color: var(--text-accent); }
-.ome-highlight-note-label { display: block; margin-bottom: 5px; color: var(--text-muted); font-size: 11px; }
+.ome-highlight-note-label { display: block; margin-bottom: 5px; color: var(--text-muted); font-size: 12px; }
 .ome-highlight-note {
   display: block;
   width: 100%;
@@ -277,15 +287,15 @@ mark.ome-note-highlight {
   padding: 8px 9px;
   resize: vertical;
   border-radius: 7px;
-  font-size: 12px;
-  line-height: 1.55;
+  font-size: 14px;
+  line-height: 1.6;
 }
 .ome-highlight-ai-results { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
 .ome-highlight-ai-results:empty { display: none; }
 .ome-highlight-ai-note { display: flex; align-items: flex-start; gap: 7px; margin-top: 8px; padding: 9px 10px; border: 1px solid var(--background-modifier-border); border-radius: 7px; background: var(--background-primary); }
 .ome-highlight-ai-note-icon { display: inline-flex; flex: 0 0 auto; margin-top: 2px; color: var(--text-accent); }
 .ome-highlight-ai-note-icon svg { width: 15px; height: 15px; }
-.ome-highlight-ai-note-link { min-width: 0; font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; color: var(--text-accent); cursor: pointer; }
+.ome-highlight-ai-note-link { min-width: 0; font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; color: var(--text-accent); cursor: pointer; }
 
 .ome-highlight-empty {
   min-height: 220px;
@@ -374,6 +384,173 @@ mark.ome-note-highlight {
 }
 .ome-highlight-library-empty { padding: 18px 10px; color: var(--text-faint); font-size: 12px; text-align: center; }
 
+.ome-home-header { margin-bottom: 4px; }
+
+.ome-home-tabs { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin: 14px 0 2px; }
+.ome-home-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 15px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  color: var(--text-muted);
+  background: transparent;
+  font-size: 15px;
+  line-height: 1.4;
+  cursor: pointer;
+  box-shadow: none;
+}
+.ome-home-tab:hover { color: var(--text-normal); background: var(--background-modifier-hover); }
+.ome-home-tab.is-active {
+  color: var(--text-accent);
+  background: var(--ome-soft);
+  border-color: var(--ome-accent);
+}
+.ome-home-tab-icon { display: inline-flex; }
+.ome-home-tab-icon svg { width: 16px; height: 16px; }
+.ome-home-tab-count { color: var(--text-faint); font-size: 13px; }
+.ome-home-tab.is-active .ome-home-tab-count { color: var(--text-accent); }
+
+.ome-queue-summary { display: flex; align-items: center; justify-content: flex-start; gap: 8px; margin: 18px 2px 15px; color: var(--text-muted); font-size: 15px; }
+.ome-queue-dot { color: var(--text-faint); }
+.ome-home-empty { height: auto; min-height: 130px; }
+.ome-home-footer { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; margin-top: 26px; }
+.ome-home-footer .ome-shadowing-card { width: min(250px, 100%); }
+
+/* 网格容器：按自身宽度（而非窗口宽度）决定列数，侧栏开合时也准确 */
+.ome-grid-wrap {
+  container-type: inline-size;
+  container-name: ome-grid;
+}
+
+.ome-card-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 16px;
+  align-items: stretch;
+}
+
+/* 一行最多 4 张卡；面板变窄时依次降为 3 / 2 / 1 列 */
+@container ome-grid (max-width: 1023px) {
+  .ome-card-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+
+@container ome-grid (max-width: 811px) {
+  .ome-card-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@container ome-grid (max-width: 559px) {
+  .ome-card-grid { grid-template-columns: minmax(0, 1fr); }
+}
+
+.ome-note-card {
+  display: flex;
+  flex-direction: column;
+  min-height: 200px;
+  padding: 18px 20px 15px;
+  border: 1px solid var(--ome-border);
+  border-radius: 14px;
+  background: var(--background-primary-alt);
+  cursor: pointer;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+.ome-note-card:hover { border-color: var(--ome-border-hover, var(--text-faint)); background: var(--background-modifier-hover); }
+.ome-note-card.is-current { border-color: var(--ome-accent); }
+
+.ome-note-card-head { display: flex; align-items: flex-start; gap: 10px; min-width: 0; }
+.ome-note-card-head h3 {
+  flex: 1 1 auto;
+  margin: 0;
+  min-width: 0;
+  font-size: 19px;
+  font-weight: 600;
+  line-height: 1.45;
+  color: var(--text-normal);
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.ome-note-card-body {
+  flex: 1 1 auto;
+  margin-top: 12px;
+  color: var(--text-muted);
+  font-size: 16px;
+  line-height: 1.75;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 6;
+  -webkit-box-orient: vertical;
+}
+
+.ome-note-card-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-top: 14px; color: var(--text-faint); font-size: 14px; }
+.ome-badge { padding: 2px 11px; border-radius: 999px; font-size: 13px; background: var(--background-modifier-hover); color: var(--text-muted); }
+.ome-badge-pending { background: var(--ome-soft); color: var(--text-accent); }
+.ome-badge-mined { color: var(--text-accent); }
+.ome-badge-exhausted { color: var(--text-faint); }
+/* 待淘素材的入库年龄：超过 AGE_STALE_DAYS 天变色，提醒它已经在队列里等太久 */
+.ome-age.is-stale { color: var(--color-orange, var(--text-warn)); font-weight: 500; }
+
+.ome-note-card.is-highlight { cursor: pointer; }
+.ome-note-card-quote {
+  padding-left: 12px;
+  border-left: 3px solid var(--ome-accent);
+  color: var(--text-normal);
+  font-size: 17px;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 6;
+  -webkit-box-orient: vertical;
+}
+.ome-note-card-note {
+  margin-top: 11px;
+  color: var(--text-muted);
+  font-size: 15px;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+}
+
+/* 一分钟口语：成品稿卡片 */
+.ome-note-card.is-speech { border-left: 3px solid var(--ome-accent); }
+
+.ome-queue-bar {
+  position: fixed;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 25px;
+  opacity: 0.85;
+  transition: opacity 140ms ease;
+}
+.ome-queue-bar:hover { opacity: 1; }
+.ome-queue-bar.is-hidden { display: none; }
+.ome-queue-bar.is-dimmed { opacity: 0.25; }
+.ome-queue-bar-button {
+  cursor: pointer;
+  padding: 5px 13px;
+  border-radius: 999px;
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: nowrap;
+  color: var(--text-muted);
+  background: transparent;
+  border: none;
+  box-shadow: none;
+}
+.ome-queue-bar-button:hover { background: var(--background-modifier-hover); color: var(--text-normal); }
+.ome-queue-bar-button.is-primary {
+  color: var(--text-on-accent);
+  background: var(--interactive-accent);
+}
+.ome-queue-bar-button.is-primary:hover { background: var(--interactive-accent-hover); color: var(--text-on-accent); }
+
 .ome-ai-result-modal { width: min(720px, calc(100vw - 32px)); }
 .ome-ai-result-text { width: 100%; min-height: 300px; max-height: 55vh; resize: vertical; line-height: 1.8; }
 .ome-ai-result-status { color: var(--text-muted); }
@@ -431,6 +608,10 @@ mark.ome-note-highlight {
 
 @media (max-width: 1100px) {
   .ome-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 1400px) {
+  .ome-columns { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
 }
 
 @media (max-width: 900px) {
