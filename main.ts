@@ -23,7 +23,6 @@ import {
 import { AIPrompt, AIResult, AISettings, buildAINoteRequest, buildHighlightInput, getHighlightAIResults, normalizeAISettings, parseAIResponse, parseAINoteContent } from "./ai";
 import { renderAISettings } from "./ai-settings";
 import { AIResultModal } from "./ai-result-modal";
-import { renderMaterialsCard, renderShadowingToolCard } from "./shadowing-tool";
 import { bracketToCheckbox } from "./bracket-to-checkbox";
 
 const VIEW_TYPE = "one-minute-english-view";
@@ -1620,9 +1619,6 @@ class OneMinuteEnglishView extends ItemView {
   }
 
   private renderFooter(root: HTMLElement): void {
-    const footer = root.createDiv({ cls: "ome-home-footer" });
-    renderMaterialsCard(footer, this.app);
-    renderShadowingToolCard(footer, this.app);
     root.createDiv({ cls: "ome-bottom-spacer", attr: { "aria-hidden": "true" } });
   }
 
