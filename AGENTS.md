@@ -10,5 +10,7 @@
 
 - 本仓库是一个 git worktree 布局：`main` 检出在 `D:\MyProjects\Obsidian_OneMinute_English`，AI 的改动发生在 `workbuddy/main-33d84c21` 分支（工作目录 `C:\Users\Administrator\WorkBuddy\Worktrees\Obsidian_OneMinute_English\main-33d84c21`）。
 - 合并流程：先在 worktree 分支提交，再到 `D:\MyProjects\Obsidian_OneMinute_English` 执行 `git merge workbuddy/main-33d84c21`（两条分支无分叉时是快进合并），最后 `git push origin main`。
+- **提交规则（用户已确认，默认执行）**：每完成一件事（代码改动 + 构建 + 部署校验通过）就在 worktree 分支**立即自动提交**一次，提交说明用中文。**不主动合并、不主动推送** —— 合并到 `main` 和 `git push` 都必须等用户明确指示。
+- 每笔提交只包含本次改动涉及的文件；`.workbuddy/memory/` 下的工作日志可以随本次改动一起提交。
 - 构建：`pnpm run build`（= `tsc -noEmit -skipLibCheck` + `node esbuild.config.mjs production`）。若 pnpm 预检查报 `ERR_PNPM_IGNORED_BUILDS`，可直接用 `node node_modules/typescript/bin/tsc -noEmit -skipLibCheck && node esbuild.config.mjs production` 绕过，产物相同。
 - 构建产物 `main.js` 里中文会被转义成 `\uXXXX`，校验时用 Python 按转义形式比对，直接 grep 中文会得到 0 结果。
