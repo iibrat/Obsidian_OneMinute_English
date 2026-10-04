@@ -1677,15 +1677,13 @@ class GoalView extends ItemView {
       : progress.expired
         ? "已过期"
         : String(progress.daysLeft);
-    const cards: { label: string; value: string; iconName: string; danger?: boolean }[] = [
-      { label: "剩余天数", value: daysText, iconName: "calendar-clock", danger: progress.expired },
-      { label: "完成数量", value: String(progress.completed), iconName: "circle-check" },
-      { label: "剩余数量", value: String(progress.remaining), iconName: "list-todo" },
+    const cards: { label: string; value: string; danger?: boolean }[] = [
+      { label: "剩余天数", value: daysText, danger: progress.expired },
+      { label: "完成数量", value: String(progress.completed) },
+      { label: "剩余数量", value: String(progress.remaining) },
     ];
     cards.forEach((item) => {
       const card = stats.createDiv({ cls: `ome-goal-stat${item.danger ? " is-danger" : ""}` });
-      const icon = card.createSpan({ cls: "ome-goal-stat-icon" });
-      setIcon(icon, item.iconName);
       card.createDiv({ cls: "ome-goal-stat-value", text: item.value });
       card.createDiv({ cls: "ome-goal-stat-label", text: item.label });
     });

@@ -710,12 +710,9 @@ mark.ome-note-highlight {
   text-align: center;
   min-width: 0;
 }
-.ome-goal-stat-icon { display: inline-flex; color: var(--ome-accent); }
-.ome-goal-stat-icon svg { width: 17px; height: 17px; }
 .ome-goal-stat-value { font-size: 19px; font-weight: 700; line-height: 1.1; }
 .ome-goal-stat-label { color: var(--text-muted); font-size: 11px; }
 .ome-goal-stat.is-danger { border-color: var(--text-error); }
-.ome-goal-stat.is-danger .ome-goal-stat-icon,
 .ome-goal-stat.is-danger .ome-goal-stat-value { color: var(--text-error); }
 
 .ome-goal-tasks-heading { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
