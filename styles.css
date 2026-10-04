@@ -457,6 +457,15 @@ mark.ome-note-highlight {
 }
 .ome-note-card:hover { border-color: var(--ome-border-hover, var(--text-faint)); background: var(--background-modifier-hover); }
 .ome-note-card.is-current { border-color: var(--ome-accent); }
+/* 队列中的卡片：点击后在右侧并列打开，用右侧描边做提示 */
+.ome-note-card.is-split-open { border-right: 3px solid var(--ome-accent); }
+.ome-card-grid:has(.ome-note-card.is-split-open)::after {
+  content: "点击卡片：在右侧并列打开（Ctrl / Cmd + 点击仍开新标签页）";
+  grid-column: 1 / -1;
+  margin-top: 4px;
+  color: var(--text-faint);
+  font-size: 13px;
+}
 
 .ome-note-card-head { display: flex; align-items: flex-start; gap: 10px; min-width: 0; }
 .ome-note-card-head h3 {

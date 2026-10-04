@@ -1030,6 +1030,11 @@ export default class OneMinuteEnglishPlugin extends Plugin {
     return current;
   }
 
+  /** 在右侧垂直分栏打开笔记，与当前笔记并列显示（不新开标签页）。 */
+  async openFileBeside(file: TFile): Promise<void> {
+    await this.app.workspace.getLeaf("split", "vertical").openFile(file);
+  }
+
   /**
    * 为当前笔记在右侧新建一篇并列笔记（标题为当天日期），并在两篇底部互相写入双链。
    */
@@ -1069,8 +1074,7 @@ export default class OneMinuteEnglishPlugin extends Plugin {
         await this.app.vault.process(source, (content) => appendLinkAtBottom(content, newNoteLink));
       }
       // 在右侧新分栏打开，与原笔记并列显示。
-      const leaf = this.app.workspace.getLeaf("split", "vertical");
-      await leaf.openFile(created);
+      await this.openFileBeside(created);
       new Notice(`已新建并列笔记：${created.basename}`);
     } catch {
       new Notice("新建并列笔记失败，请检查库是否可写");
@@ -1498,6 +1502,7 @@ class OneMinuteEnglishView extends ItemView {
         markCurrent: true,
         emptyText: "队列里没有素材了。往素材目录加一篇，或把标记为“淘干”的笔记改回“待淘”。",
         emptyIcon: "check-check",
+        openBeside: true,
       });
     } else {
       this.renderHint(root, [
@@ -1634,7 +1639,7 @@ class OneMinuteEnglishView extends ItemView {
   private renderCardGrid(
     root: HTMLElement,
     entries: MaterialEntry[],
-    options: { markCurrent: boolean; emptyText: string; emptyIcon: string },
+    options: { markCurrent: boolean; emptyText: string; emptyIcon: string; openBeside?: boolean },
   ): void {
     if (!entries.length) {
       this.renderNotice(root, options.emptyText, options.emptyIcon);
@@ -1671,7 +1676,17 @@ class OneMinuteEnglishView extends ItemView {
       }
       if (entry.seedCount) meta.createSpan({ text: `${entry.seedCount} 处种子` });
 
-      card.addEventListener("click", () => void this.app.workspace.getLeaf(false).openFile(entry.file));
+      const openBeside = options.openBeside ?? false;
+      if (openBeside) card.addClass("is-split-open");
+      card.addEventListener("click", (event) => {
+        // 队列中用右侧并列模式打开；按住 Ctrl / Cmd 或中键时仍走 Obsidian 默认的标签页行为。
+        const defaultBehavior = event.ctrlKey || event.metaKey || event.button === 1;
+        if (!openBeside || defaultBehavior) {
+          void this.app.workspace.getLeaf(false).openFile(entry.file);
+          return;
+        }
+        void this.plugin.openFileBeside(entry.file);
+      });
     });
   }
 
