@@ -356,6 +356,7 @@ export default class OneMinuteEnglishPlugin extends Plugin {
     this.registerEvent(this.app.metadataCache.on("changed", () => this.updateQueueBar()));
     this.registerEvent(this.app.vault.on("create", () => this.updateQueueBar()));
     this.registerDomEvent(window, "resize", () => this.updateQueueBar());
+    this.patchOpenLinkText();
     this.registerEvent(this.app.vault.on("rename", (file, oldPath) => void this.updateHighlightPaths(file.path, oldPath)));
     this.registerEvent(this.app.vault.on("delete", (file) => {
       void this.removeAINoteLinks(file.path, file instanceof TFolder)
@@ -761,9 +762,14 @@ export default class OneMinuteEnglishPlugin extends Plugin {
   }
 
   isMaterialFile(file: TFile): boolean {
+    return this.isMaterialPath(file.path);
+  }
+
+  /** 素材目录判断（路径版），供链接跳转拦截等没有 TFile 对象的场景使用。 */
+  isMaterialPath(path: string): boolean {
     const folder = this.settings.materialFolder.trim().replace(/^\/+|\/+$/g, "");
     if (!folder) return false;
-    return file.path.startsWith(`${folder}/`);
+    return path.startsWith(`${folder}/`);
   }
 
   statusPropertyName(): string {
@@ -1030,9 +1036,73 @@ export default class OneMinuteEnglishPlugin extends Plugin {
     return current;
   }
 
-  /** 在右侧垂直分栏打开笔记，与当前笔记并列显示（不新开标签页）。 */
-  async openFileBeside(file: TFile): Promise<void> {
-    await this.app.workspace.getLeaf("split", "vertical").openFile(file);
+  /** 在右侧垂直分栏打开笔记，与当前笔记并列显示；右侧已有相邻窗格时直接复用，避免越分越窄。 */
+  async openFileBeside(file: TFile, linktext = ""): Promise<void> {
+    const current = this.app.workspace.getActiveViewOfType(MarkdownView)?.leaf ?? null;
+    const neighbor = this.findBesideLeaf(current);
+    if (neighbor) {
+      await neighbor.openFile(file);
+      await this.app.workspace.revealLeaf(neighbor);
+    } else {
+      await this.app.workspace.getLeaf("split", "vertical").openFile(file);
+    }
+    await this.revealSubpath(linktext);
+  }
+
+  /** 找当前窗格同一层、紧贴其右边的相邻窗格；没有或结构不确定时返回 null。 */
+  private findBesideLeaf(leaf: WorkspaceLeaf | null): WorkspaceLeaf | null {
+    if (!leaf) return null;
+    const children = (leaf as unknown as { parent?: { children?: unknown[] } }).parent?.children;
+    if (!Array.isArray(children)) return null;
+    const index = children.indexOf(leaf);
+    if (index === -1 || index === children.length - 1) return null;
+    const neighbor = children[index + 1];
+    if (!(neighbor instanceof WorkspaceLeaf)) return null;
+    // 不依赖内部布局字段的语义，直接用几何位置确认它确实在右边。
+    const container = (target: WorkspaceLeaf) => (target as unknown as { containerEl: HTMLElement }).containerEl;
+    const sourceRight = container(leaf).getBoundingClientRect().right;
+    const neighborLeft = container(neighbor).getBoundingClientRect().left;
+    return neighborLeft >= sourceRight - 2 ? neighbor : null;
+  }
+
+  /** 打开后尽力滚动到链接小节（#标题 形式）；普通笔记链接没有小节，是空操作。 */
+  private async revealSubpath(linktext: string): Promise<void> {
+    const index = linktext.indexOf("#");
+    if (index < 0) return;
+    const subpath = linktext.slice(index + 1).trim();
+    if (!subpath || subpath.startsWith("^")) return;
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      const view = this.app.workspace.getActiveViewOfType(MarkdownView);
+      const file = view?.file ?? null;
+      if (view && file) {
+        const heading = this.app.metadataCache.getFileCache(file)?.headings
+          ?.find((item) => item.heading === subpath);
+        if (heading) {
+          const line = heading.position.start.line;
+          view.editor.scrollIntoView({ from: { line, ch: 0 }, to: { line, ch: 0 } });
+          return;
+        }
+      }
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 50));
+    }
+  }
+
+  /** 拦截内部链接跳转：素材笔记页（右下角有操作栏的页面）里的链接一律在右侧并列打开。 */
+  private patchOpenLinkText(): void {
+    if (Platform.isMobile) return;
+    const workspace = this.app.workspace;
+    const original = workspace.openLinkText.bind(workspace);
+    const plugin = this;
+    workspace.openLinkText = function (linktext, sourcePath, newLeaf, openState) {
+      if (!newLeaf && sourcePath && plugin.isMaterialPath(sourcePath)) {
+        const dest = plugin.app.metadataCache.getFirstLinkpathDest(linktext, sourcePath);
+        if (dest) return plugin.openFileBeside(dest, linktext);
+      }
+      return original(linktext, sourcePath, newLeaf, openState);
+    };
+    this.register(() => {
+      workspace.openLinkText = original;
+    });
   }
 
   /**
@@ -1502,7 +1572,6 @@ class OneMinuteEnglishView extends ItemView {
         markCurrent: true,
         emptyText: "队列里没有素材了。往素材目录加一篇，或把标记为“淘干”的笔记改回“待淘”。",
         emptyIcon: "check-check",
-        openBeside: true,
       });
     } else {
       this.renderHint(root, [
@@ -1639,7 +1708,7 @@ class OneMinuteEnglishView extends ItemView {
   private renderCardGrid(
     root: HTMLElement,
     entries: MaterialEntry[],
-    options: { markCurrent: boolean; emptyText: string; emptyIcon: string; openBeside?: boolean },
+    options: { markCurrent: boolean; emptyText: string; emptyIcon: string },
   ): void {
     if (!entries.length) {
       this.renderNotice(root, options.emptyText, options.emptyIcon);
@@ -1676,17 +1745,7 @@ class OneMinuteEnglishView extends ItemView {
       }
       if (entry.seedCount) meta.createSpan({ text: `${entry.seedCount} 处种子` });
 
-      const openBeside = options.openBeside ?? false;
-      if (openBeside) card.addClass("is-split-open");
-      card.addEventListener("click", (event) => {
-        // 队列中用右侧并列模式打开；按住 Ctrl / Cmd 或中键时仍走 Obsidian 默认的标签页行为。
-        const defaultBehavior = event.ctrlKey || event.metaKey || event.button === 1;
-        if (!openBeside || defaultBehavior) {
-          void this.app.workspace.getLeaf(false).openFile(entry.file);
-          return;
-        }
-        void this.plugin.openFileBeside(entry.file);
-      });
+      card.addEventListener("click", () => void this.app.workspace.getLeaf(false).openFile(entry.file));
     });
   }
 
