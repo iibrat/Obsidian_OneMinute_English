@@ -295,6 +295,7 @@ export default class OneMinuteEnglishPlugin extends Plugin {
   private queueBar: HTMLElement | null = null;
   private queueBarToggle: HTMLButtonElement | null = null;
   private queueBarComplete: HTMLButtonElement | null = null;
+  private queueBarCompanion: HTMLButtonElement | null = null;
   private queueBarObserver: ResizeObserver | null = null;
   private queueBarObserved: HTMLElement | null = null;
   private queueBarFrame = 0;
@@ -926,9 +927,13 @@ export default class OneMinuteEnglishPlugin extends Plugin {
     const complete = bar.createEl("button", { cls: "ome-queue-bar-button is-primary", text: "已阅" });
     complete.addEventListener("mousedown", (event) => event.preventDefault());
     complete.addEventListener("click", () => void this.completeMinedAndAdvance());
+    const companion = bar.createEl("button", { cls: "ome-queue-bar-button", text: "并列笔记" });
+    companion.addEventListener("mousedown", (event) => event.preventDefault());
+    companion.addEventListener("click", () => void this.createCompanionNote());
     this.queueBar = bar;
     this.queueBarToggle = toggle;
     this.queueBarComplete = complete;
+    this.queueBarCompanion = companion;
     return bar;
   }
 
@@ -959,6 +964,7 @@ export default class OneMinuteEnglishPlugin extends Plugin {
     const entry = this.readMaterial(file);
     this.queueBarToggle?.setText(entry.status === "exhausted" ? "回归队列" : "移出队列");
     this.queueBarComplete?.setText(entry.status === "mined" ? "再淘一轮" : "已阅");
+    this.queueBarCompanion?.setText("并列笔记");
 
     const rect = view.containerEl.getBoundingClientRect();
     if (rect.width < 220 || rect.height < 180) {
@@ -1003,6 +1009,72 @@ export default class OneMinuteEnglishPlugin extends Plugin {
     await this.setMaterialStatus(file, "mined");
     if (next && next.file.path !== file.path) {
       await this.app.workspace.getLeaf(false).openFile(next.file);
+    }
+    this.updateQueueBar();
+  }
+
+  /** 保证目录存在（逐级创建），返回规范化后的路径。 */
+  private async ensureFolder(folderPath: string): Promise<string> {
+    const segments = folderPath.replace(/^\/+|\/+$/g, "").split("/").filter(Boolean);
+    let current = "";
+    for (const segment of segments) {
+      current = current ? `${current}/${segment}` : segment;
+      const target = normalizePath(current);
+      if (this.app.vault.getAbstractFileByPath(target)) continue;
+      try {
+        await this.app.vault.createFolder(target);
+      } catch {
+        // 并发或已存在时忽略
+      }
+    }
+    return current;
+  }
+
+  /**
+   * 为当前笔记在右侧新建一篇并列笔记（标题为当天日期），并在两篇底部互相写入双链。
+   */
+  async createCompanionNote(): Promise<void> {
+    const source = this.activeMaterialFile();
+    if (!source) {
+      new Notice("当前笔记不在素材目录里");
+      return;
+    }
+    const configured = this.settings.speechFolder.trim();
+    if (!configured) {
+      new Notice("请先在设置中配置“一分钟口语目录”");
+      return;
+    }
+    let folder = configured;
+    try {
+      folder = await this.ensureFolder(configured);
+    } catch {
+      new Notice("创建一分钟口语目录失败，请检查库是否可写");
+      return;
+    }
+    const baseName = this.formatDate(new Date(), "YYYY年MM月dd日");
+    let target = normalizePath(`${folder}/${baseName}.md`);
+    let suffix = 2;
+    while (this.app.vault.getAbstractFileByPath(target)) {
+      target = normalizePath(`${folder}/${baseName}-${suffix}.md`);
+      suffix += 1;
+    }
+    try {
+      const sourceLink = this.app.fileManager.generateMarkdownLink(source, target);
+      const body = `---\n${JSON.stringify(this.statusPropertyName())}: []\n---\n\n## 来源笔记\n\n${sourceLink}\n`;
+      const created = await this.app.vault.create(target, body);
+      // 检查上一步是否写入过，避免重复点击时重复追加。
+      const sourceContent = await this.app.vault.read(source);
+      if (!sourceContent.includes(`[[${created.basename}]]`)) {
+        const newNoteLink = this.app.fileManager.generateMarkdownLink(created, source.path);
+        await this.app.vault.process(source, (content) => appendLinkAtBottom(content, newNoteLink));
+      }
+      // 在右侧新分栏打开，与原笔记并列显示。
+      const leaf = this.app.workspace.getLeaf("split", "vertical");
+      await leaf.openFile(created);
+      new Notice(`已新建并列笔记：${created.basename}`);
+    } catch {
+      new Notice("新建并列笔记失败，请检查库是否可写");
+      return;
     }
     this.updateQueueBar();
   }
