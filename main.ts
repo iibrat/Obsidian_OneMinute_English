@@ -1518,10 +1518,11 @@ class GoalView extends ItemView {
     setIcon(headerIcon, "target");
     const headerText = header.createDiv({ cls: "ome-goal-header-text" });
     headerText.createEl("h2", { text: "目标进度" });
-    headerText.createDiv({
-      cls: "ome-goal-subtitle",
-      text: goal.folder.trim() ? goal.folder : "尚未设置目标目录",
-    });
+    // 标题下显示目标描述；没写描述就什么都不显示，不再展示目录路径。
+    const description = goal.description.trim();
+    if (description) {
+      headerText.createDiv({ cls: "ome-goal-subtitle", text: description });
+    }
     const settings = header.createEl("button", {
       cls: "ome-icon-button",
       attr: { "aria-label": "打开目标设置", title: "打开目标设置" },
