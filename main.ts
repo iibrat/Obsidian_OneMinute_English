@@ -1732,7 +1732,7 @@ class GoalView extends ItemView {
   }
 }
 
-type HomeTab = "queue" | "exhausted" | "highlights" | "speech";
+type HomeTab = "queue" | "exhausted" | "highlights";
 
 class OneMinuteEnglishView extends ItemView {
   private renderToken = 0;
@@ -1768,25 +1768,12 @@ class OneMinuteEnglishView extends ItemView {
       .filter((entry) => entry.status === "exhausted")
       .sort((a, b) => b.addedAt - a.addedAt);
     const highlights = [...this.plugin.settings.highlights].sort((a, b) => b.createdAt - a.createdAt);
-    const speech = this.speechFiles();
 
     this.renderTabs(root, {
       queue: queue.length,
       exhausted: exhausted.length,
       highlights: highlights.length,
-      speech: speech.length,
     });
-
-    if (this.activeTab === "speech") {
-      if (!this.plugin.settings.speechFolder.trim()) {
-        this.renderNotice(root, "请先在 One Minute English 设置中配置“一分钟口语目录”。", "folder-open");
-      } else {
-        this.renderHint(root, [`共 ${speech.length} 篇`]);
-        this.renderSpeechGrid(root, speech);
-      }
-      this.renderQuickCaptureButton(root);
-      return;
-    }
 
     if (!hasMaterialFolder) {
       this.renderNotice(root, "请先在 One Minute English 设置中配置“素材目录”。", "folder-open");
@@ -1840,7 +1827,6 @@ class OneMinuteEnglishView extends ItemView {
       { id: "queue", label: "队列中", iconName: "list-ordered" },
       { id: "exhausted", label: "不在队列", iconName: "archive" },
       { id: "highlights", label: "高亮笔记", iconName: "highlighter" },
-      { id: "speech", label: "一分钟口语", iconName: "mic" },
     ];
     tabs.forEach((tab) => {
       const button = bar.createEl("button", { cls: `ome-home-tab${this.activeTab === tab.id ? " is-active" : ""}` });
@@ -1879,39 +1865,6 @@ class OneMinuteEnglishView extends ItemView {
 
   private sourceName(path: string): string {
     return path.split("/").pop()?.replace(/\.md$/i, "") ?? path;
-  }
-
-  /** 一分钟口语目录下的成品稿，最近改动的排最前。 */
-  private speechFiles(): TFile[] {
-    return this.plugin
-      .filesInFolder(this.plugin.settings.speechFolder)
-      .sort((a, b) => b.stat.mtime - a.stat.mtime);
-  }
-
-  private renderSpeechGrid(root: HTMLElement, files: TFile[]): void {
-    if (!files.length) {
-      this.renderNotice(root, "这个目录里还没有 Markdown 文档。把写好的一分钟口语文稿放进来，或点右下角 + 新建。", "mic");
-      return;
-    }
-    const wrap = root.createDiv({ cls: "ome-grid-wrap" });
-    const grid = wrap.createDiv({ cls: "ome-card-grid" });
-    const token = this.renderToken;
-    files.forEach((file) => {
-      const card = grid.createDiv({ cls: "ome-note-card is-speech" });
-      card.setAttr("title", file.path);
-      card.createDiv({ cls: "ome-note-card-head" }).createEl("h3", { text: file.basename });
-
-      const body = card.createDiv({ cls: "ome-note-card-body", text: "读取中…" });
-      const meta = card.createDiv({ cls: "ome-note-card-meta" });
-      meta.createSpan({ text: this.plugin.dateText(file.stat.mtime) });
-
-      void this.plugin.previewText(file).then((preview) => {
-        if (token !== this.renderToken || !body.isConnected) return;
-        body.setText(preview || "（空笔记）");
-      });
-
-      card.addEventListener("click", () => void this.app.workspace.getLeaf(false).openFile(file));
-    });
   }
 
   private async openHighlightSource(highlight: HighlightNote): Promise<void> {
@@ -2106,7 +2059,7 @@ class OneMinuteEnglishSettingTab extends PluginSettingTab {
     this.folderSetting("素材目录", "主页“素材”标签加载的目录。", "materialFolder");
     this.folderSetting("话题目录", "侧栏高亮卡片上「转成笔记」和「AI 生成」产出的笔记保存到这里。", "topicFolder");
     this.folderSetting("快速记录目录", "右下角 + 按钮创建的 Markdown 文档保存到这里。", "quickCaptureFolder");
-    this.folderSetting("一分钟口语目录", "主页“一分钟口语”标签加载的目录，存放写好的成品稿。", "speechFolder");
+    this.folderSetting("一分钟口语目录", "阅读素材时点「新建笔记」，新建的口播稿保存到这个目录。", "speechFolder");
     new Setting(containerEl)
       .setName("文件名时间格式")
       .setDesc("快速记录的文件名格式。支持 YYYY、YY、MM、M、dd、d、HH、H、mm、m、ss、s，例如：YYYY年MM月dd日。")
