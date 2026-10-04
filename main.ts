@@ -933,7 +933,7 @@ export default class OneMinuteEnglishPlugin extends Plugin {
     const complete = bar.createEl("button", { cls: "ome-queue-bar-button is-primary", text: "已阅" });
     complete.addEventListener("mousedown", (event) => event.preventDefault());
     complete.addEventListener("click", () => void this.completeMinedAndAdvance());
-    const companion = bar.createEl("button", { cls: "ome-queue-bar-button", text: "并列笔记" });
+    const companion = bar.createEl("button", { cls: "ome-queue-bar-button", text: "新建笔记" });
     companion.addEventListener("mousedown", (event) => event.preventDefault());
     companion.addEventListener("click", () => void this.createCompanionNote());
     this.queueBar = bar;
@@ -970,7 +970,7 @@ export default class OneMinuteEnglishPlugin extends Plugin {
     const entry = this.readMaterial(file);
     this.queueBarToggle?.setText(entry.status === "exhausted" ? "回归队列" : "移出队列");
     this.queueBarComplete?.setText(entry.status === "mined" ? "再淘一轮" : "已阅");
-    this.queueBarCompanion?.setText("并列笔记");
+    this.queueBarCompanion?.setText("新建笔记");
 
     const rect = view.containerEl.getBoundingClientRect();
     if (rect.width < 220 || rect.height < 180) {
@@ -1145,9 +1145,9 @@ export default class OneMinuteEnglishPlugin extends Plugin {
       }
       // 在右侧新分栏打开，与原笔记并列显示。
       await this.openFileBeside(created);
-      new Notice(`已新建并列笔记：${created.basename}`);
+      new Notice(`已新建笔记：${created.basename}`);
     } catch {
-      new Notice("新建并列笔记失败，请检查库是否可写");
+      new Notice("新建笔记失败，请检查库是否可写");
       return;
     }
     this.updateQueueBar();
