@@ -1514,8 +1514,6 @@ class GoalView extends ItemView {
 
     const goal = this.plugin.settings.goal;
     const header = root.createDiv({ cls: "ome-goal-header" });
-    const headerIcon = header.createSpan({ cls: "ome-goal-header-icon" });
-    setIcon(headerIcon, "target");
     const headerText = header.createDiv({ cls: "ome-goal-header-text" });
     headerText.createEl("h2", { text: "目标进度" });
     // 标题下显示目标描述；没写描述就什么都不显示，不再展示目录路径。
