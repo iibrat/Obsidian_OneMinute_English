@@ -516,9 +516,6 @@ mark.ome-note-highlight {
   -webkit-box-orient: vertical;
 }
 
-/* 一分钟口语：成品稿卡片 */
-.ome-note-card.is-speech { border-left: 3px solid var(--ome-accent); }
-
 .ome-queue-bar {
   position: fixed;
   z-index: 1000;
