@@ -869,13 +869,12 @@ export default class OneMinuteEnglishPlugin extends Plugin {
     return this.sortMaterials(this.materials().filter((entry) => entry.status !== "exhausted"));
   }
 
-  /** 目标目录下的一篇笔记及其完成状态。 */
+  /** 目标目录下的笔记及其完成状态；未完成的排前面，组内按最近改动优先。 */
   goalEntries(): { file: TFile; done: boolean }[] {
     const goal = this.settings.goal;
     const property = (goal.property || "").trim();
     const value = (goal.value || "").trim().toLocaleLowerCase();
     return this.filesInFolder(goal.folder)
-      .sort((a, b) => b.stat.mtime - a.stat.mtime)
       .map((file) => {
         let done = false;
         if (property) {
@@ -889,7 +888,8 @@ export default class OneMinuteEnglishPlugin extends Plugin {
           }
         }
         return { file, done };
-      });
+      })
+      .sort((a, b) => (a.done === b.done ? b.file.stat.mtime - a.file.stat.mtime : a.done ? 1 : -1));
   }
 
   /** 目标进度统计：已完成、剩余、进度比例、剩余天数。 */
