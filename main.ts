@@ -1628,7 +1628,8 @@ type HomeTab = "queue" | "exhausted" | "highlights";
 
 class OneMinuteEnglishView extends ItemView {
   private renderToken = 0;
-  private activeTab: HomeTab = "queue";
+  /** 当前 tab：固定 tab 用 HomeTab，目录 tab 用 customTabs 的 id。 */
+  private activeTab: string = "queue";
 
   constructor(leaf: WorkspaceLeaf, private readonly plugin: OneMinuteEnglishPlugin) {
     super(leaf);
@@ -1666,6 +1667,13 @@ class OneMinuteEnglishView extends ItemView {
       exhausted: exhausted.length,
       highlights: highlights.length,
     });
+
+    const activeCustom = this.plugin.settings.customTabs.find((tab) => tab.id === this.activeTab);
+    if (activeCustom) {
+      this.renderCustomTab(root, activeCustom);
+      this.renderQuickCaptureButton(root);
+      return;
+    }
 
     if (!hasMaterialFolder) {
       this.renderNotice(root, "请先在 One Minute English 设置中配置“素材目录”。", "folder-open");
@@ -1731,6 +1739,87 @@ class OneMinuteEnglishView extends ItemView {
         this.activeTab = tab.id;
         this.render();
       });
+    });
+
+    // 目录 tab：点击切换，悬停出现 × 可移除。
+    this.plugin.settings.customTabs.forEach((tab) => {
+      const count = this.plugin.filesInFolder(tab.path).length;
+      const button = bar.createEl("button", {
+        cls: `ome-home-tab is-custom${this.activeTab === tab.id ? " is-active" : ""}`,
+        attr: { title: tab.path },
+      });
+      const icon = button.createSpan({ cls: "ome-home-tab-icon" });
+      setIcon(icon, "folder");
+      button.createSpan({ cls: "ome-home-tab-label", text: tab.name });
+      button.createSpan({ cls: "ome-home-tab-count", text: String(count) });
+      const remove = button.createSpan({
+        cls: "ome-home-tab-remove",
+        attr: { "aria-label": `移除标签 ${tab.name}`, title: "移除标签" },
+      });
+      setIcon(remove, "x");
+      button.addEventListener("click", () => {
+        if (this.activeTab === tab.id) return;
+        this.activeTab = tab.id;
+        this.render();
+      });
+      remove.addEventListener("click", (event) => {
+        event.stopPropagation();
+        this.plugin.settings.customTabs = this.plugin.settings.customTabs.filter((item) => item.id !== tab.id);
+        if (this.activeTab === tab.id) this.activeTab = "queue";
+        void this.plugin.saveSettings();
+        this.render();
+      });
+    });
+
+    // 加号：选一个目录添加为 tab。
+    const add = bar.createEl("button", {
+      cls: "ome-home-tab-add",
+      attr: { "aria-label": "添加目录标签", title: "把一个目录添加为标签" },
+    });
+    setIcon(add, "plus");
+    add.addEventListener("click", () => {
+      new FolderSuggestModal(this.app, (folder) => {
+        const existing = this.plugin.settings.customTabs.find((item) => item.path === folder.path);
+        if (existing) {
+          this.activeTab = existing.id;
+          this.render();
+          return;
+        }
+        const tab: FolderTab = { id: `tab-${Date.now().toString(36)}`, name: folder.name, path: folder.path };
+        this.plugin.settings.customTabs = [...this.plugin.settings.customTabs, tab];
+        this.activeTab = tab.id;
+        void this.plugin.saveSettings();
+        this.render();
+      }).open();
+    });
+  }
+
+  /** 目录 tab 内容：该目录下的笔记按创建时间新→旧排列。 */
+  private renderCustomTab(root: HTMLElement, tab: FolderTab): void {
+    const files = this.plugin.filesInFolder(tab.path).sort((a, b) => b.stat.ctime - a.stat.ctime);
+    this.renderHint(root, [`共 ${files.length} 篇`, "按创建时间排列，最新的在最前"]);
+    if (!files.length) {
+      this.renderNotice(root, "这个目录里还没有 Markdown 文档。", "folder-open");
+      return;
+    }
+    const wrap = root.createDiv({ cls: "ome-grid-wrap" });
+    const grid = wrap.createDiv({ cls: "ome-card-grid" });
+    const token = this.renderToken;
+    files.forEach((file) => {
+      const card = grid.createDiv({ cls: "ome-note-card" });
+      card.setAttr("title", file.path);
+      card.createDiv({ cls: "ome-note-card-head" }).createEl("h3", { text: file.basename });
+
+      const body = card.createDiv({ cls: "ome-note-card-body", text: "读取中…" });
+      void this.plugin.previewText(file).then((preview) => {
+        if (token !== this.renderToken || !body.isConnected) return;
+        body.setText(preview || "（空笔记）");
+      });
+
+      const meta = card.createDiv({ cls: "ome-note-card-meta" });
+      meta.createSpan({ text: `创建于 ${this.plugin.dateText(file.stat.ctime)}` });
+
+      card.addEventListener("click", () => void this.app.workspace.getLeaf(false).openFile(file));
     });
   }
 
