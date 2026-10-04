@@ -642,3 +642,119 @@ mark.ome-note-highlight {
   .ome-highlight-note-list { max-height: 220px; border-right: 0; border-bottom: 1px solid var(--background-modifier-border); }
   .ome-highlight-library-cards .ome-highlight-list { grid-template-columns: 1fr; }
 }
+
+/* ===== 目标进度面板 ===== */
+
+.ome-goal-view {
+  --ome-accent: var(--interactive-accent);
+  --ome-border: var(--background-modifier-border);
+  --ome-soft: color-mix(in srgb, var(--interactive-accent) 15%, transparent);
+  box-sizing: border-box;
+  height: 100%;
+  overflow-y: auto;
+  padding: 14px 12px 32px;
+  color: var(--text-normal);
+}
+
+.ome-goal-view * { box-sizing: border-box; }
+
+.ome-goal-header { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 14px; }
+.ome-goal-header-icon { display: inline-flex; color: var(--ome-accent); flex: 0 0 auto; margin-top: 2px; }
+.ome-goal-header-icon svg { width: 20px; height: 20px; }
+.ome-goal-header-text { flex: 1; min-width: 0; }
+.ome-goal-header-text h2 { margin: 0; font-size: 17px; line-height: 1.3; }
+.ome-goal-subtitle {
+  margin-top: 3px;
+  color: var(--text-muted);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ome-goal-progress {
+  border: 1px solid var(--ome-border);
+  background: var(--background-primary-alt);
+  border-radius: 12px;
+  padding: 14px 15px;
+  margin-bottom: 12px;
+}
+.ome-goal-progress-top { display: flex; align-items: baseline; gap: 8px; margin-bottom: 10px; }
+.ome-goal-progress-label { flex: 1; display: flex; align-items: baseline; gap: 8px; min-width: 0; font-size: 13px; color: var(--text-muted); }
+.ome-goal-progress-count { color: var(--text-normal); font-weight: 600; }
+.ome-goal-progress-percent { font-size: 16px; font-weight: 700; color: var(--ome-accent); }
+.ome-goal-progress-percent.is-complete { color: #67c23a; }
+.ome-goal-progress-track {
+  height: 10px;
+  border-radius: 999px;
+  background: var(--background-modifier-border);
+  overflow: hidden;
+}
+.ome-goal-progress-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--ome-accent);
+  transition: width 260ms ease;
+}
+
+.ome-goal-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-bottom: 16px; }
+.ome-goal-stat {
+  border: 1px solid var(--ome-border);
+  background: var(--background-primary-alt);
+  border-radius: 12px;
+  padding: 10px 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  text-align: center;
+  min-width: 0;
+}
+.ome-goal-stat-icon { display: inline-flex; color: var(--ome-accent); }
+.ome-goal-stat-icon svg { width: 17px; height: 17px; }
+.ome-goal-stat-value { font-size: 19px; font-weight: 700; line-height: 1.1; }
+.ome-goal-stat-label { color: var(--text-muted); font-size: 11px; }
+.ome-goal-stat.is-danger { border-color: var(--text-error); }
+.ome-goal-stat.is-danger .ome-goal-stat-icon,
+.ome-goal-stat.is-danger .ome-goal-stat-value { color: var(--text-error); }
+
+.ome-goal-tasks-heading { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.ome-goal-tasks-heading h3 { margin: 0; font-size: 14px; }
+.ome-goal-task-list { display: flex; flex-direction: column; gap: 8px; }
+.ome-goal-task {
+  border: 1px solid var(--ome-border);
+  background: var(--background-primary-alt);
+  border-radius: 10px;
+  padding: 10px 11px;
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+.ome-goal-task:hover { background: var(--background-modifier-hover); border-color: var(--background-modifier-border-hover); }
+.ome-goal-task.is-done { opacity: 0.72; }
+.ome-goal-task-check { flex: 0 0 auto; display: inline-flex; color: var(--text-faint); margin-top: 1px; }
+.ome-goal-task-check svg { width: 16px; height: 16px; }
+.ome-goal-task.is-done .ome-goal-task-check { color: #67c23a; }
+.ome-goal-task-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.ome-goal-task-title { font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ome-goal-task.is-done .ome-goal-task-title { text-decoration: line-through; color: var(--text-muted); }
+.ome-goal-task-preview {
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-faint);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.ome-goal-task-meta { display: flex; align-items: center; gap: 8px; color: var(--text-faint); font-size: 11px; margin-top: 2px; }
+.ome-goal-task-status {
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--background-modifier-hover);
+  color: var(--text-muted);
+}
+.ome-goal-task-status.is-done { background: color-mix(in srgb, #67c23a 20%, transparent); color: #4e9a2f; }
+.ome-goal-empty { min-height: 140px; }

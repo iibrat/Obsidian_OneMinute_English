@@ -28,6 +28,7 @@ import { bracketToCheckbox } from "./bracket-to-checkbox";
 const VIEW_TYPE = "one-minute-english-view";
 const HIGHLIGHTS_VIEW_TYPE = "one-minute-english-highlights-view";
 const HIGHLIGHTS_LIBRARY_VIEW_TYPE = "one-minute-english-highlights-library-view";
+const GOAL_VIEW_TYPE = "one-minute-english-goal-view";
 type MaterialStatus = "pending" | "mined" | "exhausted";
 
 interface MaterialEntry {
@@ -86,6 +87,20 @@ interface FolderTab {
   path: string;
 }
 
+/** 目标进度面板配置。 */
+interface GoalSettings {
+  /** 目标数量：希望完成多少篇笔记。 */
+  count: number;
+  /** 目标目录：统计哪个目录下的笔记。 */
+  folder: string;
+  /** 截止日期，格式 YYYY-MM-DD；留空表示不设期限。 */
+  deadline: string;
+  /** 判断完成的属性名。 */
+  property: string;
+  /** 判断完成的属性值。 */
+  value: string;
+}
+
 interface OneMinuteEnglishSettings {
   openAsStartupPage: boolean;
   materialFolder: string;
@@ -105,6 +120,7 @@ interface OneMinuteEnglishSettings {
   minedAtProperty: string;
   mineRoundProperty: string;
   bracketToCheckbox: boolean;
+  goal: GoalSettings;
 }
 
 const DEFAULT_SETTINGS: OneMinuteEnglishSettings = {
@@ -126,6 +142,13 @@ const DEFAULT_SETTINGS: OneMinuteEnglishSettings = {
   minedAtProperty: "上次淘的时间",
   mineRoundProperty: "淘过轮次",
   bracketToCheckbox: false,
+  goal: {
+    count: 30,
+    folder: "",
+    deadline: "",
+    property: "状态",
+    value: "已完成",
+  },
 };
 
 class FolderSuggestModal extends FuzzySuggestModal<TFolder> {
@@ -306,9 +329,11 @@ export default class OneMinuteEnglishPlugin extends Plugin {
     this.registerView(VIEW_TYPE, (leaf) => new OneMinuteEnglishView(leaf, this));
     this.registerView(HIGHLIGHTS_VIEW_TYPE, (leaf) => new HighlightsView(leaf, this));
     this.registerView(HIGHLIGHTS_LIBRARY_VIEW_TYPE, (leaf) => new HighlightsLibraryView(leaf, this));
+    this.registerView(GOAL_VIEW_TYPE, (leaf) => new GoalView(leaf, this));
     this.registerEditorExtension(bracketToCheckbox(() => this.settings.bracketToCheckbox));
     this.addRibbonIcon("languages", "打开 One Minute English", () => void this.activateView());
     this.addRibbonIcon("highlighter", "打开高亮侧栏", () => void this.activateHighlightsView());
+    this.addRibbonIcon("target", "打开目标进度面板", () => void this.activateGoalView());
     this.addCommand({ id: "open-one-minute-english", name: "打开主页", callback: () => void this.activateView() });
     this.addCommand({
       id: "highlight-selected-text",
@@ -321,6 +346,7 @@ export default class OneMinuteEnglishPlugin extends Plugin {
     });
     this.addCommand({ id: "open-highlights-sidebar", name: "打开高亮侧栏", callback: () => void this.activateHighlightsView() });
     this.addCommand({ id: "open-highlights-library", name: "打开高亮总览", callback: () => void this.activateHighlightsLibraryView() });
+    this.addCommand({ id: "open-goal-panel", name: "打开目标进度面板", callback: () => void this.activateGoalView() });
     this.addCommand({
       id: "toggle-material-queue",
       name: "移出 / 回归淘金队列",
@@ -410,6 +436,19 @@ export default class OneMinuteEnglishPlugin extends Plugin {
     if (!leaf) {
       leaf = this.app.workspace.getLeaf("tab");
       await leaf.setViewState({ type: HIGHLIGHTS_LIBRARY_VIEW_TYPE, active: true });
+    }
+    await this.app.workspace.revealLeaf(leaf);
+  }
+
+  async activateGoalView(): Promise<void> {
+    let leaf: WorkspaceLeaf | null = this.app.workspace.getLeavesOfType(GOAL_VIEW_TYPE)[0] ?? null;
+    if (!leaf) {
+      leaf = this.app.workspace.getRightLeaf(false);
+      if (!leaf) {
+        new Notice("无法打开右侧目标面板");
+        return;
+      }
+      await leaf.setViewState({ type: GOAL_VIEW_TYPE, active: true });
     }
     await this.app.workspace.revealLeaf(leaf);
   }
@@ -830,6 +869,69 @@ export default class OneMinuteEnglishPlugin extends Plugin {
     return this.sortMaterials(this.materials().filter((entry) => entry.status !== "exhausted"));
   }
 
+  /** 目标目录下的一篇笔记及其完成状态。 */
+  goalEntries(): { file: TFile; done: boolean }[] {
+    const goal = this.settings.goal;
+    const property = (goal.property || "").trim();
+    const value = (goal.value || "").trim().toLocaleLowerCase();
+    return this.filesInFolder(goal.folder)
+      .sort((a, b) => b.stat.mtime - a.stat.mtime)
+      .map((file) => {
+        let done = false;
+        if (property) {
+          const frontmatter = (this.app.metadataCache.getFileCache(file)?.frontmatter ?? {}) as Record<string, unknown>;
+          const raw = frontmatter[property];
+          if (value) {
+            const candidates = Array.isArray(raw) ? raw : [raw];
+            done = candidates.some((item) => this.frontmatterText(item).toLocaleLowerCase() === value);
+          } else {
+            done = raw !== undefined && raw !== null;
+          }
+        }
+        return { file, done };
+      });
+  }
+
+  /** 目标进度统计：已完成、剩余、进度比例、剩余天数。 */
+  goalProgress(): {
+    total: number;
+    target: number;
+    completed: number;
+    remaining: number;
+    ratio: number;
+    daysLeft: number | null;
+    expired: boolean;
+    hasDeadline: boolean;
+  } {
+    const goal = this.settings.goal;
+    const entries = goal.folder.trim() ? this.goalEntries() : [];
+    const completed = entries.filter((entry) => entry.done).length;
+    const target = Math.max(0, Math.floor(goal.count) || 0);
+    const ratio = target > 0 ? Math.min(1, completed / target) : 0;
+    const remaining = Math.max(0, target - completed);
+    let daysLeft: number | null = null;
+    let expired = false;
+    const deadline = Date.parse(goal.deadline);
+    if (!Number.isNaN(deadline)) {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const end = new Date(deadline);
+      end.setHours(0, 0, 0, 0);
+      daysLeft = Math.round((end.getTime() - today.getTime()) / 86_400_000);
+      expired = daysLeft < 0;
+    }
+    return {
+      total: entries.length,
+      target,
+      completed,
+      remaining,
+      ratio,
+      daysLeft,
+      expired,
+      hasDeadline: !Number.isNaN(deadline),
+    };
+  }
+
   async setMaterialStatus(file: TFile, status: MaterialStatus): Promise<void> {
     const settings = this.settings;
     const minedAtProperty = settings.minedAtProperty.trim() || "上次淘的时间";
@@ -1213,6 +1315,8 @@ export default class OneMinuteEnglishPlugin extends Plugin {
     this.settings = Object.assign({}, DEFAULT_SETTINGS, saved);
     this.settings.ai = normalizeAISettings(saved?.ai);
     if (!Array.isArray(this.settings.highlights)) this.settings.highlights = [];
+    // 旧版本的 data.json 没有 goal 字段，这里合并默认值，避免读取到 undefined。
+    this.settings.goal = Object.assign({}, DEFAULT_SETTINGS.goal, saved?.goal ?? {});
     if (hasLegacyStatuses || saved?.ai?.builtinPromptVersion !== 1) await this.saveData(this.settings);
   }
 
@@ -1230,6 +1334,10 @@ export default class OneMinuteEnglishPlugin extends Plugin {
     this.app.workspace.getLeavesOfType(HIGHLIGHTS_LIBRARY_VIEW_TYPE).forEach((leaf) => {
       const view = leaf.view;
       if (view instanceof HighlightsLibraryView) view.render();
+    });
+    this.app.workspace.getLeavesOfType(GOAL_VIEW_TYPE).forEach((leaf) => {
+      const view = leaf.view;
+      if (view instanceof GoalView) view.render();
     });
   }
 }
@@ -1484,6 +1592,145 @@ class HighlightsLibraryView extends HighlightsView {
     cardsHeader.createSpan({ cls: "ome-count", text: String(selectedHighlights.length) });
     const list = cards.createDiv({ cls: "ome-highlight-list" });
     selectedHighlights.forEach((highlight) => this.renderHighlight(list, highlight));
+  }
+}
+
+class GoalView extends ItemView {
+  constructor(leaf: WorkspaceLeaf, private readonly plugin: OneMinuteEnglishPlugin) {
+    super(leaf);
+  }
+
+  getViewType(): string { return GOAL_VIEW_TYPE; }
+  getDisplayText(): string { return "目标进度"; }
+  getIcon(): string { return "target"; }
+
+  async onOpen(): Promise<void> {
+    this.registerEvent(this.app.vault.on("create", () => this.render()));
+    this.registerEvent(this.app.vault.on("delete", () => this.render()));
+    this.registerEvent(this.app.vault.on("rename", () => this.render()));
+    this.registerEvent(this.app.metadataCache.on("changed", () => this.render()));
+    this.render();
+  }
+
+  render(): void {
+    const root = this.contentEl;
+    root.empty();
+    root.addClass("ome-goal-view");
+
+    const goal = this.plugin.settings.goal;
+    const header = root.createDiv({ cls: "ome-goal-header" });
+    const headerIcon = header.createSpan({ cls: "ome-goal-header-icon" });
+    setIcon(headerIcon, "target");
+    const headerText = header.createDiv({ cls: "ome-goal-header-text" });
+    headerText.createEl("h2", { text: "目标进度" });
+    headerText.createDiv({
+      cls: "ome-goal-subtitle",
+      text: goal.folder.trim() ? goal.folder : "尚未设置目标目录",
+    });
+    const settings = header.createEl("button", {
+      cls: "ome-icon-button",
+      attr: { "aria-label": "打开目标设置", title: "打开目标设置" },
+    });
+    setIcon(settings, "settings");
+    settings.addEventListener("click", () => {
+      const appWithSettings = this.app as App & { setting: { open(): void; openTabById(id: string): void } };
+      appWithSettings.setting.open();
+      appWithSettings.setting.openTabById(this.plugin.manifest.id);
+    });
+
+    if (!goal.folder.trim()) {
+      this.renderNotice(root, "点右上角齿轮，在设置 → 目标里选择目标目录并设定数量与截止日期。", "target");
+      return;
+    }
+
+    const progress = this.plugin.goalProgress();
+    this.renderProgressCard(root, progress);
+    this.renderStats(root, progress);
+
+    const entries = this.plugin.goalEntries();
+    this.renderTaskList(root, entries);
+  }
+
+  private renderProgressCard(root: HTMLElement, progress: ReturnType<OneMinuteEnglishPlugin["goalProgress"]>): void {
+    const card = root.createDiv({ cls: "ome-goal-progress" });
+    const top = card.createDiv({ cls: "ome-goal-progress-top" });
+    const label = top.createDiv({ cls: "ome-goal-progress-label" });
+    label.createSpan({ text: "完成进度" });
+    label.createSpan({
+      cls: "ome-goal-progress-count",
+      text: `${progress.completed} / ${progress.target} 篇`,
+    });
+    const percent = Math.round(progress.ratio * 100);
+    top.createSpan({ cls: `ome-goal-progress-percent${percent >= 100 ? " is-complete" : ""}`, text: `${percent}%` });
+
+    const track = card.createDiv({
+      cls: "ome-goal-progress-track",
+      attr: { role: "progressbar", "aria-valuemin": "0", "aria-valuemax": "100", "aria-valuenow": String(percent) },
+    });
+    track.createDiv({ cls: "ome-goal-progress-fill" }).style.width = `${percent}%`;
+  }
+
+  private renderStats(root: HTMLElement, progress: ReturnType<OneMinuteEnglishPlugin["goalProgress"]>): void {
+    const stats = root.createDiv({ cls: "ome-goal-stats" });
+    const daysText = !progress.hasDeadline
+      ? "未设置"
+      : progress.expired
+        ? "已过期"
+        : String(progress.daysLeft);
+    const cards: { label: string; value: string; iconName: string; danger?: boolean }[] = [
+      { label: "剩余天数", value: daysText, iconName: "calendar-clock", danger: progress.expired },
+      { label: "完成数量", value: String(progress.completed), iconName: "circle-check" },
+      { label: "剩余数量", value: String(progress.remaining), iconName: "list-todo" },
+    ];
+    cards.forEach((item) => {
+      const card = stats.createDiv({ cls: `ome-goal-stat${item.danger ? " is-danger" : ""}` });
+      const icon = card.createSpan({ cls: "ome-goal-stat-icon" });
+      setIcon(icon, item.iconName);
+      card.createDiv({ cls: "ome-goal-stat-value", text: item.value });
+      card.createDiv({ cls: "ome-goal-stat-label", text: item.label });
+    });
+  }
+
+  private renderTaskList(root: HTMLElement, entries: { file: TFile; done: boolean }[]): void {
+    const section = root.createDiv({ cls: "ome-goal-tasks" });
+    const heading = section.createDiv({ cls: "ome-goal-tasks-heading" });
+    heading.createEl("h3", { text: "任务清单" });
+    heading.createSpan({ cls: "ome-count", text: String(entries.length) });
+
+    if (!entries.length) {
+      this.renderNotice(section, "目标目录里还没有笔记。", "file-text");
+      return;
+    }
+
+    const list = section.createDiv({ cls: "ome-goal-task-list" });
+    entries.forEach((entry) => {
+      const item = list.createDiv({ cls: `ome-goal-task${entry.done ? " is-done" : ""}` });
+      item.setAttr("title", entry.file.path);
+
+      const check = item.createSpan({ cls: "ome-goal-task-check" });
+      setIcon(check, entry.done ? "check-circle-2" : "circle");
+
+      const body = item.createDiv({ cls: "ome-goal-task-body" });
+      body.createDiv({ cls: "ome-goal-task-title", text: entry.file.basename });
+      const preview = body.createDiv({ cls: "ome-goal-task-preview", text: "读取中…" });
+      void this.plugin.previewText(entry.file).then((text) => {
+        if (!preview.isConnected) return;
+        preview.setText(text || "（空笔记）");
+      });
+
+      const meta = body.createDiv({ cls: "ome-goal-task-meta" });
+      meta.createSpan({ cls: `ome-goal-task-status${entry.done ? " is-done" : ""}`, text: entry.done ? "已完成" : "进行中" });
+      meta.createSpan({ text: this.plugin.dateText(entry.file.stat.mtime) });
+
+      item.addEventListener("click", () => void this.app.workspace.getLeaf(false).openFile(entry.file));
+    });
+  }
+
+  private renderNotice(parent: HTMLElement, text: string, iconName: string): void {
+    const empty = parent.createDiv({ cls: "ome-empty ome-goal-empty" });
+    const icon = empty.createSpan();
+    setIcon(icon, iconName);
+    empty.createDiv({ text });
   }
 }
 
@@ -1810,7 +2057,7 @@ class OneMinuteEnglishView extends ItemView {
 }
 
 class OneMinuteEnglishSettingTab extends PluginSettingTab {
-  private activeTab: "general" | "ai" = "general";
+  private activeTab: "general" | "goal" | "ai" = "general";
 
   constructor(app: App, private readonly plugin: OneMinuteEnglishPlugin) { super(app, plugin); }
 
@@ -1820,7 +2067,8 @@ class OneMinuteEnglishSettingTab extends PluginSettingTab {
     containerEl.addClass("ome-settings");
     containerEl.createEl("h2", { text: "One Minute English 设置" });
     const tabs = containerEl.createDiv({ cls: "ome-settings-tabs", attr: { "aria-label": "设置分类" } });
-    for (const [id, label] of [["general", "常规"], ["ai", "AI"]] as const) {
+    const tabItems = [["general", "常规"], ["goal", "目标"], ["ai", "AI"]] as const;
+    tabItems.forEach(([id, label], index) => {
       const button = tabs.createEl("button", {
         text: label,
         cls: `ome-settings-tab${this.activeTab === id ? " is-active" : ""}`,
@@ -1829,12 +2077,16 @@ class OneMinuteEnglishSettingTab extends PluginSettingTab {
       button.addEventListener("click", () => {
         this.activeTab = id;
         this.display();
-        this.containerEl.querySelectorAll<HTMLButtonElement>(".ome-settings-tab")[id === "general" ? 0 : 1]?.focus();
+        this.containerEl.querySelectorAll<HTMLButtonElement>(".ome-settings-tab")[index]?.focus();
       });
-    }
+    });
     if (this.activeTab === "ai") {
       renderAISettings(containerEl.createDiv({ cls: "ome-ai-settings" }), this.app, this.plugin.settings.ai,
         () => this.plugin.saveSettings(false));
+      return;
+    }
+    if (this.activeTab === "goal") {
+      this.renderGoalSettings(containerEl);
       return;
     }
     new Setting(containerEl)
@@ -1930,6 +2182,68 @@ class OneMinuteEnglishSettingTab extends PluginSettingTab {
       .setDesc("该属性为此值时归入对应标签；也支持属性值为列表。")
       .addText((text) => text.setPlaceholder(placeholder).setValue(this.plugin.settings[key]).onChange(async (value) => {
         this.plugin.settings[key] = value.trim();
+        await this.plugin.saveSettings();
+      }));
+  }
+
+  private renderGoalSettings(containerEl: HTMLElement): void {
+    const goal = this.plugin.settings.goal;
+    containerEl.createEl("h3", { text: "目标进度" });
+    containerEl.createEl("p", {
+      cls: "setting-item-description",
+      text: "配置后可在右侧边栏打开“目标进度”面板（命令面板搜索“打开目标进度面板”，或点击左侧目标图标）。",
+    });
+    new Setting(containerEl)
+      .addButton((button) => button.setButtonText("打开目标进度面板").onClick(() => {
+        void this.plugin.activateGoalView();
+      }));
+    new Setting(containerEl)
+      .setName("目录数量")
+      .setDesc("希望完成多少篇笔记，用于计算进度条比例。")
+      .addText((text) => {
+        text.inputEl.type = "number";
+        text.inputEl.min = "0";
+        text.setPlaceholder("例如：30").setValue(String(goal.count || "")).onChange(async (value) => {
+          const parsed = Number.parseInt(value, 10);
+          goal.count = Number.isNaN(parsed) ? 0 : Math.max(0, parsed);
+          await this.plugin.saveSettings();
+        });
+      });
+    new Setting(containerEl)
+      .setName("目标目录")
+      .setDesc("统计哪个目录下的笔记，包含所有子目录。")
+      .addText((text) => text.setPlaceholder("例如：英语/目标").setValue(goal.folder).onChange(async (value) => {
+        goal.folder = value.replace(/^\/+|\/+$/g, "");
+        await this.plugin.saveSettings();
+      }))
+      .addButton((button) => button.setButtonText("选择目录").onClick(() => {
+        new FolderSuggestModal(this.app, (folder) => {
+          goal.folder = folder.path;
+          void this.plugin.saveSettings().then(() => this.display());
+        }).open();
+      }));
+    new Setting(containerEl)
+      .setName("截止日期")
+      .setDesc("目标完成的最后日期，格式 YYYY-MM-DD；留空表示不设置期限。")
+      .addText((text) => {
+        text.inputEl.type = "date";
+        text.setValue(goal.deadline).onChange(async (value) => {
+          goal.deadline = value.trim();
+          await this.plugin.saveSettings();
+        });
+      });
+    new Setting(containerEl)
+      .setName("判断完成的属性")
+      .setDesc("笔记 Frontmatter / Properties 中用于判断是否完成的属性名，例如 status。")
+      .addText((text) => text.setPlaceholder("例如：状态").setValue(goal.property).onChange(async (value) => {
+        goal.property = value.trim();
+        await this.plugin.saveSettings();
+      }));
+    new Setting(containerEl)
+      .setName("判断完成的属性值")
+      .setDesc("当上述属性等于此值时，该笔记视为已完成；留空则只要存在该属性就算完成。")
+      .addText((text) => text.setPlaceholder("例如：已完成").setValue(goal.value).onChange(async (value) => {
+        goal.value = value.trim();
         await this.plugin.saveSettings();
       }));
   }
