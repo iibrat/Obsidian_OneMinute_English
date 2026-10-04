@@ -598,9 +598,9 @@ mark.ome-note-highlight {
   margin-top: 3px;
   color: var(--text-muted);
   font-size: 12px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .ome-goal-progress {
