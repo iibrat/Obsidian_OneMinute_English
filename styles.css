@@ -351,8 +351,7 @@ mark.ome-note-highlight {
 .ome-home-tab-remove:hover { color: var(--text-error); background: var(--background-modifier-error); }
 .ome-home-tab-remove svg { width: 13px; height: 13px; }
 
-.ome-queue-summary { display: flex; align-items: center; justify-content: flex-start; gap: 8px; margin: 18px 2px 15px; color: var(--text-muted); font-size: 15px; }
-.ome-queue-dot { color: var(--text-faint); }
+.ome-queue-summary { display: flex; align-items: center; justify-content: flex-start; gap: 8px; margin: 18px 2px 15px; color: var(--text-muted); font-size: 15px; }.ome-queue-dot { color: var(--text-faint); }
 .ome-home-empty { height: auto; min-height: 130px; }
 .ome-home-footer { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; margin-top: 26px; }
 .ome-home-footer .ome-shadowing-card { width: min(250px, 100%); }
@@ -687,3 +686,9 @@ mark.ome-note-highlight {
 }
 .ome-goal-task-status.is-done { background: color-mix(in srgb, #67c23a 20%, transparent); color: #4e9a2f; }
 .ome-goal-empty { min-height: 140px; }
+
+/* 设置 → 目标：目标描述多行输入占满整行 */
+.ome-goal-description-setting { display: block; }
+.ome-goal-description-setting .setting-item-info { margin-bottom: 6px; }
+.ome-goal-description-setting .setting-item-control { width: 100%; }
+.ome-goal-description-setting textarea { width: 100%; min-height: 96px; resize: vertical; }

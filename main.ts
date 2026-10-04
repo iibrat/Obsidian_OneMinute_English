@@ -98,6 +98,8 @@ interface GoalSettings {
   property: string;
   /** 判断完成的属性值。 */
   value: string;
+  /** 目标描述：多行文字，说明这个目标想达成什么。 */
+  description: string;
 }
 
 interface OneMinuteEnglishSettings {
@@ -147,6 +149,7 @@ const DEFAULT_SETTINGS: OneMinuteEnglishSettings = {
     deadline: "",
     property: "状态",
     value: "已完成",
+    description: "",
   },
 };
 
@@ -2129,6 +2132,18 @@ class OneMinuteEnglishSettingTab extends PluginSettingTab {
       .addButton((button) => button.setButtonText("打开目标进度面板").onClick(() => {
         void this.plugin.activateGoalView();
       }));
+    new Setting(containerEl)
+      .setName("目标描述")
+      .setDesc("说明这个目标想达成什么，写给自己看。")
+      .setClass("ome-goal-description-setting")
+      .addTextArea((area) => {
+        area.inputEl.rows = 5;
+        area.setPlaceholder("例如：用三个月把 30 篇口语稿写出来并录音，先在英语/目标目录里攒够作品。")
+          .setValue(goal.description).onChange(async (value) => {
+            goal.description = value;
+            await this.plugin.saveSettings(false);
+          });
+      });
     new Setting(containerEl)
       .setName("目录数量")
       .setDesc("希望完成多少篇笔记，用于计算进度条比例。")
