@@ -27,7 +27,6 @@ import { bracketToCheckbox } from "./bracket-to-checkbox";
 
 const VIEW_TYPE = "one-minute-english-view";
 const HIGHLIGHTS_VIEW_TYPE = "one-minute-english-highlights-view";
-const HIGHLIGHTS_LIBRARY_VIEW_TYPE = "one-minute-english-highlights-library-view";
 const GOAL_VIEW_TYPE = "one-minute-english-goal-view";
 type MaterialStatus = "pending" | "mined" | "exhausted";
 
@@ -328,7 +327,6 @@ export default class OneMinuteEnglishPlugin extends Plugin {
     await this.loadSettings();
     this.registerView(VIEW_TYPE, (leaf) => new OneMinuteEnglishView(leaf, this));
     this.registerView(HIGHLIGHTS_VIEW_TYPE, (leaf) => new HighlightsView(leaf, this));
-    this.registerView(HIGHLIGHTS_LIBRARY_VIEW_TYPE, (leaf) => new HighlightsLibraryView(leaf, this));
     this.registerView(GOAL_VIEW_TYPE, (leaf) => new GoalView(leaf, this));
     this.registerEditorExtension(bracketToCheckbox(() => this.settings.bracketToCheckbox));
     this.addRibbonIcon("languages", "打开 One Minute English", () => void this.activateView());
@@ -345,7 +343,6 @@ export default class OneMinuteEnglishPlugin extends Plugin {
       },
     });
     this.addCommand({ id: "open-highlights-sidebar", name: "打开高亮侧栏", callback: () => void this.activateHighlightsView() });
-    this.addCommand({ id: "open-highlights-library", name: "打开高亮总览", callback: () => void this.activateHighlightsLibraryView() });
     this.addCommand({ id: "open-goal-panel", name: "打开目标进度面板", callback: () => void this.activateGoalView() });
     this.addCommand({
       id: "toggle-material-queue",
@@ -427,15 +424,6 @@ export default class OneMinuteEnglishPlugin extends Plugin {
         return;
       }
       await leaf.setViewState({ type: HIGHLIGHTS_VIEW_TYPE, active: true });
-    }
-    await this.app.workspace.revealLeaf(leaf);
-  }
-
-  async activateHighlightsLibraryView(): Promise<void> {
-    let leaf = this.app.workspace.getLeavesOfType(HIGHLIGHTS_LIBRARY_VIEW_TYPE)[0];
-    if (!leaf) {
-      leaf = this.app.workspace.getLeaf("tab");
-      await leaf.setViewState({ type: HIGHLIGHTS_LIBRARY_VIEW_TYPE, active: true });
     }
     await this.app.workspace.revealLeaf(leaf);
   }
@@ -534,10 +522,8 @@ export default class OneMinuteEnglishPlugin extends Plugin {
   }
 
   private refreshHighlightAIState(id: string): void {
-    for (const type of [HIGHLIGHTS_VIEW_TYPE, HIGHLIGHTS_LIBRARY_VIEW_TYPE]) {
-      for (const leaf of this.app.workspace.getLeavesOfType(type)) {
-        if (leaf.view instanceof HighlightsView) leaf.view.refreshAIState(id);
-      }
+    for (const leaf of this.app.workspace.getLeavesOfType(HIGHLIGHTS_VIEW_TYPE)) {
+      if (leaf.view instanceof HighlightsView) leaf.view.refreshAIState(id);
     }
   }
 
@@ -591,10 +577,8 @@ export default class OneMinuteEnglishPlugin extends Plugin {
             clearedSupplement = true;
             this.refreshHighlightSupplement(current);
           }
-          for (const type of [HIGHLIGHTS_VIEW_TYPE, HIGHLIGHTS_LIBRARY_VIEW_TYPE]) {
-            for (const leaf of this.app.workspace.getLeavesOfType(type)) {
-              if (leaf.view instanceof HighlightsView) leaf.view.refreshAIResults(current);
-            }
+          for (const leaf of this.app.workspace.getLeavesOfType(HIGHLIGHTS_VIEW_TYPE)) {
+            if (leaf.view instanceof HighlightsView) leaf.view.refreshAIResults(current);
           }
           await this.saveSettings(false);
           modal.close();
@@ -626,10 +610,8 @@ export default class OneMinuteEnglishPlugin extends Plugin {
   }
 
   private refreshHighlightSupplement(highlight: HighlightNote): void {
-    for (const type of [HIGHLIGHTS_VIEW_TYPE, HIGHLIGHTS_LIBRARY_VIEW_TYPE]) {
-      for (const leaf of this.app.workspace.getLeavesOfType(type)) {
-        if (leaf.view instanceof HighlightsView) leaf.view.refreshSupplement(highlight);
-      }
+    for (const leaf of this.app.workspace.getLeavesOfType(HIGHLIGHTS_VIEW_TYPE)) {
+      if (leaf.view instanceof HighlightsView) leaf.view.refreshSupplement(highlight);
     }
   }
 
@@ -681,11 +663,9 @@ export default class OneMinuteEnglishPlugin extends Plugin {
       changed.push(highlight);
     }
     if (!changed.length) return;
-    for (const type of [HIGHLIGHTS_VIEW_TYPE, HIGHLIGHTS_LIBRARY_VIEW_TYPE]) {
-      for (const leaf of this.app.workspace.getLeavesOfType(type)) {
-        if (leaf.view instanceof HighlightsView) {
-          for (const highlight of changed) leaf.view.refreshAIResults(highlight);
-        }
+    for (const leaf of this.app.workspace.getLeavesOfType(HIGHLIGHTS_VIEW_TYPE)) {
+      if (leaf.view instanceof HighlightsView) {
+        for (const highlight of changed) leaf.view.refreshAIResults(highlight);
       }
     }
     await this.saveSettings(false);
@@ -1331,10 +1311,6 @@ export default class OneMinuteEnglishPlugin extends Plugin {
       const view = leaf.view;
       if (view instanceof HighlightsView) view.render();
     });
-    this.app.workspace.getLeavesOfType(HIGHLIGHTS_LIBRARY_VIEW_TYPE).forEach((leaf) => {
-      const view = leaf.view;
-      if (view instanceof HighlightsLibraryView) view.render();
-    });
     this.app.workspace.getLeavesOfType(GOAL_VIEW_TYPE).forEach((leaf) => {
       const view = leaf.view;
       if (view instanceof GoalView) view.render();
@@ -1372,12 +1348,6 @@ class HighlightsView extends ItemView {
     setIcon(icon, "highlighter");
     title.createEl("h2", { text: "高亮" });
     title.createSpan({ cls: "ome-count", text: String(highlights.length) });
-    const openLibrary = heading.createEl("button", {
-      cls: "ome-open-highlights-library",
-      attr: { "aria-label": "打开高亮总览", title: "打开高亮总览" },
-    });
-    setIcon(openLibrary, "library");
-    openLibrary.addEventListener("click", () => void this.plugin.activateHighlightsLibraryView());
     root.createDiv({ cls: "ome-highlights-hint", text: "在笔记中选中文字，点击选区上方的“加入高亮”。" });
 
     const list = root.createDiv({ cls: "ome-highlight-list" });
@@ -1514,84 +1484,6 @@ class HighlightsView extends ItemView {
     if (offset < 0) return;
     const position = markdownView.editor.offsetToPos(offset);
     markdownView.editor.scrollIntoView({ from: position, to: position }, true);
-  }
-}
-
-class HighlightsLibraryView extends HighlightsView {
-  private selectedPath = "";
-
-  getViewType(): string { return HIGHLIGHTS_LIBRARY_VIEW_TYPE; }
-  getDisplayText(): string { return "高亮总览"; }
-  getIcon(): string { return "library"; }
-
-  async onOpen(): Promise<void> {
-    const activeFile = this.app.workspace.getActiveFile();
-    this.selectedPath = activeFile?.path ?? "";
-    this.render();
-  }
-
-  render(): void {
-    const root = this.contentEl;
-    root.empty();
-    root.addClass("ome-highlights-library");
-
-    const summaries = Array.from(this.plugin.settings.highlights.reduce((items, highlight) => {
-      const current = items.get(highlight.sourcePath);
-      if (current) {
-        current.count += 1;
-        current.latest = Math.max(current.latest, highlight.createdAt);
-      } else {
-        items.set(highlight.sourcePath, { path: highlight.sourcePath, count: 1, latest: highlight.createdAt });
-      }
-      return items;
-    }, new Map<string, { path: string; count: number; latest: number }>()).values())
-      .sort((a, b) => b.latest - a.latest);
-
-    if (!summaries.some((summary) => summary.path === this.selectedPath)) {
-      this.selectedPath = summaries[0]?.path ?? "";
-    }
-
-    const header = root.createDiv({ cls: "ome-highlights-library-header" });
-    const headerIcon = header.createSpan();
-    setIcon(headerIcon, "library");
-    header.createEl("h2", { text: "高亮总览" });
-    header.createSpan({ cls: "ome-count", text: String(this.plugin.settings.highlights.length) });
-
-    const columns = root.createDiv({ cls: "ome-highlights-library-columns" });
-    const notes = columns.createDiv({ cls: "ome-highlight-note-list" });
-    const cards = columns.createDiv({ cls: "ome-highlight-library-cards" });
-
-    if (!summaries.length) {
-      notes.createDiv({ cls: "ome-highlight-library-empty", text: "还没有包含高亮的笔记" });
-      return;
-    }
-
-    summaries.forEach((summary) => {
-      const button = notes.createEl("button", {
-        cls: `ome-highlight-note-item${summary.path === this.selectedPath ? " is-active" : ""}`,
-        attr: { title: summary.path },
-      });
-      const name = summary.path.split("/").pop()?.replace(/\.md$/i, "") ?? summary.path;
-      button.createSpan({ cls: "ome-highlight-note-name", text: name });
-      button.createSpan({ cls: "ome-count", text: String(summary.count) });
-      if (summary.path.includes("/")) {
-        button.createSpan({ cls: "ome-highlight-note-path", text: summary.path.slice(0, summary.path.lastIndexOf("/")) });
-      }
-      button.addEventListener("click", () => {
-        this.selectedPath = summary.path;
-        this.render();
-      });
-    });
-
-    const selectedHighlights = this.plugin.settings.highlights.filter(
-      (highlight) => highlight.sourcePath === this.selectedPath,
-    );
-    const selectedName = this.selectedPath.split("/").pop()?.replace(/\.md$/i, "") ?? this.selectedPath;
-    const cardsHeader = cards.createDiv({ cls: "ome-highlight-library-cards-header" });
-    cardsHeader.createEl("h3", { text: selectedName });
-    cardsHeader.createSpan({ cls: "ome-count", text: String(selectedHighlights.length) });
-    const list = cards.createDiv({ cls: "ome-highlight-list" });
-    selectedHighlights.forEach((highlight) => this.renderHighlight(list, highlight));
   }
 }
 
