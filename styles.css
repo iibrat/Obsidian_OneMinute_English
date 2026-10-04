@@ -326,6 +326,30 @@ mark.ome-note-highlight {
 .ome-home-tab-icon svg { width: 16px; height: 16px; }
 .ome-home-tab-count { color: var(--text-faint); font-size: 13px; }
 .ome-home-tab.is-active .ome-home-tab-count { color: var(--text-accent); }
+.ome-home-tab-add {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 7px 12px;
+  border: 1px dashed var(--background-modifier-border-hover);
+  border-radius: 999px;
+  color: var(--text-faint);
+  background: transparent;
+  cursor: pointer;
+  box-shadow: none;
+}
+.ome-home-tab-add:hover { color: var(--text-accent); border-color: var(--ome-accent); background: var(--background-modifier-hover); }
+.ome-home-tab-add svg { width: 15px; height: 15px; }
+.ome-home-tab-remove {
+  display: none;
+  align-items: center;
+  padding: 2px;
+  border-radius: 50%;
+  color: var(--text-faint);
+}
+.ome-home-tab.is-custom:hover .ome-home-tab-remove { display: inline-flex; }
+.ome-home-tab-remove:hover { color: var(--text-error); background: var(--background-modifier-error); }
+.ome-home-tab-remove svg { width: 13px; height: 13px; }
 
 .ome-queue-summary { display: flex; align-items: center; justify-content: flex-start; gap: 8px; margin: 18px 2px 15px; color: var(--text-muted); font-size: 15px; }
 .ome-queue-dot { color: var(--text-faint); }
