@@ -120,6 +120,11 @@ interface OneMinuteEnglishSettings {
   exhaustedValue: string;
   minedAtProperty: string;
   mineRoundProperty: string;
+  /**
+   * 素材入库时间属性。待淘排序和「入库 N 天前」都读它，缺属性时按文件创建时间自动补写。
+   * 走笔记属性而不是文件系统时间，是为了两台电脑同步后顺序不被同步时间冲乱。
+   */
+  addedAtProperty: string;
   bracketToCheckbox: boolean;
   goal: GoalSettings;
 }
@@ -142,6 +147,7 @@ const DEFAULT_SETTINGS: OneMinuteEnglishSettings = {
   exhaustedValue: "淘干",
   minedAtProperty: "上次淘的时间",
   mineRoundProperty: "淘过轮次",
+  addedAtProperty: "入库时间",
   bracketToCheckbox: false,
   goal: {
     count: 30,
@@ -325,6 +331,9 @@ export default class OneMinuteEnglishPlugin extends Plugin {
   private queueBarObserved: HTMLElement | null = null;
   private queueBarFrame = 0;
   private readonly previewCache = new Map<string, { mtime: number; text: string }>();
+  /** 「入库时间」补写的防抖句柄与并发开关。 */
+  private backfillTimer: number | null = null;
+  private backfillRunning = false;
 
   async onload(): Promise<void> {
     await this.loadSettings();
@@ -380,7 +389,10 @@ export default class OneMinuteEnglishPlugin extends Plugin {
     }));
     this.registerEvent(this.app.workspace.on("file-open", () => this.updateQueueBar()));
     this.registerEvent(this.app.metadataCache.on("changed", () => this.updateQueueBar()));
-    this.registerEvent(this.app.vault.on("create", () => this.updateQueueBar()));
+    this.registerEvent(this.app.vault.on("create", () => {
+      this.updateQueueBar();
+      this.scheduleBackfillAddedAt();
+    }));
     this.registerDomEvent(window, "resize", () => this.updateQueueBar());
     this.patchOpenLinkText();
     this.registerEvent(this.app.vault.on("rename", (file, oldPath) => void this.updateHighlightPaths(file.path, oldPath)));
@@ -391,6 +403,7 @@ export default class OneMinuteEnglishPlugin extends Plugin {
     this.addSettingTab(new OneMinuteEnglishSettingTab(this.app, this));
     this.app.workspace.onLayoutReady(() => {
       if (this.settings.openAsStartupPage) void this.activateView();
+      this.scheduleBackfillAddedAt();
     });
     this.registerEvent(this.app.workspace.on("layout-change", () => void this.openInEmptyLeaf()));
     this.registerEvent(this.app.workspace.on("layout-change", () => this.updateQueueBar()));
@@ -798,6 +811,10 @@ export default class OneMinuteEnglishPlugin extends Plugin {
     return this.settings.materialStatusProperty.trim() || "素材状态";
   }
 
+  addedAtPropertyName(): string {
+    return this.settings.addedAtProperty.trim() || "入库时间";
+  }
+
   statusLabel(status: MaterialStatus): string {
     if (status === "mined") return this.settings.minedValue.trim() || "已淘";
     if (status === "exhausted") return this.settings.exhaustedValue.trim() || "淘干";
@@ -822,13 +839,16 @@ export default class OneMinuteEnglishPlugin extends Plugin {
       : rawStatus === exhaustedValue
         ? "exhausted"
         : "pending";
+    // 入库时间优先读笔记属性；属性还没写上的先用文件创建时间兜底（与补写的种子一致）。
+    const addedAt = Date.parse(this.frontmatterText(frontmatter[this.addedAtPropertyName()]));
+    const effectiveAddedAt = Number.isNaN(addedAt) ? file.stat.ctime : addedAt;
     const minedAt = Date.parse(this.frontmatterText(frontmatter[settings.minedAtProperty.trim() || "上次淘的时间"]));
     const rounds = Number.parseInt(this.frontmatterText(frontmatter[settings.mineRoundProperty.trim() || "淘过轮次"]), 10);
     return {
       file,
       status,
-      addedAt: file.stat.ctime,
-      minedAt: Number.isNaN(minedAt) ? file.stat.ctime : minedAt,
+      addedAt: effectiveAddedAt,
+      minedAt: Number.isNaN(minedAt) ? effectiveAddedAt : minedAt,
       rounds: Number.isNaN(rounds) ? 0 : Math.max(0, rounds),
       seedCount: settings.highlights.filter((highlight) => highlight.sourcePath === file.path).length,
     };
@@ -850,6 +870,53 @@ export default class OneMinuteEnglishPlugin extends Plugin {
 
   queueEntries(): MaterialEntry[] {
     return this.sortMaterials(this.materials().filter((entry) => entry.status !== "exhausted"));
+  }
+
+  /** 防抖触发「入库时间」补写，避免连续的文件事件把扫描跑很多遍。 */
+  scheduleBackfillAddedAt(delay = 300): void {
+    if (this.backfillTimer !== null) window.clearTimeout(this.backfillTimer);
+    this.backfillTimer = window.setTimeout(() => {
+      this.backfillTimer = null;
+      void this.backfillAddedAt();
+    }, delay);
+  }
+
+  /**
+   * 给缺「入库时间」属性的素材补写时间，种子取文件创建时间（首次补写请在有正确文件时间的那台机器上做）。
+   * 写入前会在 processFrontMatter 回调里再核对一次真实文件内容，所以元数据索引延迟也不会覆盖手写的值。
+   */
+  async backfillAddedAt(): Promise<void> {
+    if (this.backfillRunning) return;
+    this.backfillRunning = true;
+    try {
+      const property = this.addedAtPropertyName();
+      const pending = this.materials().filter((entry) => this.frontmatterText(
+        ((this.app.metadataCache.getFileCache(entry.file)?.frontmatter ?? {}) as Record<string, unknown>)[property],
+      ) === "");
+      let written = 0;
+      for (const entry of pending) {
+        const seed = this.formatTimestamp(new Date(entry.file.stat.ctime));
+        try {
+          await this.app.fileManager.processFrontMatter(entry.file, (frontmatter) => {
+            const target = frontmatter as unknown as Record<string, unknown>;
+            if (this.frontmatterText(target[property]) !== "") return;
+            target[property] = seed;
+            written += 1;
+          });
+        } catch {
+          // 单篇写入失败（只读、被占用等）不影响其余笔记
+        }
+      }
+      if (written === 0) return;
+      new Notice(`已为 ${written} 篇素材补写「${property}」属性`);
+      this.app.workspace.getLeavesOfType(VIEW_TYPE).forEach((leaf) => {
+        const view = leaf.view;
+        if (view instanceof OneMinuteEnglishView) view.render();
+      });
+      this.updateQueueBar();
+    } finally {
+      this.backfillRunning = false;
+    }
   }
 
   /** 目标目录下的笔记及其完成状态；未完成的排前面，组内按最近改动优先。 */
@@ -924,7 +991,7 @@ export default class OneMinuteEnglishPlugin extends Plugin {
       const target = frontmatter as unknown as Record<string, unknown>;
       target[this.statusPropertyName()] = this.statusLabel(status);
       if (status === "mined") {
-        target[minedAtProperty] = this.formatDate(new Date(), "YYYY-MM-DD");
+        target[minedAtProperty] = this.formatTimestamp(new Date());
         target[roundProperty] = previous.rounds + 1;
       }
     });
@@ -956,6 +1023,20 @@ export default class OneMinuteEnglishPlugin extends Plugin {
       s: String(date.getSeconds()),
     };
     return format.replace(/YYYY|YY|MM|M|dd|DD|d|D|HH|H|mm|m|ss|s/g, (token) => values[token]);
+  }
+
+  /**
+   * 本地时间戳字符串，形如 2026-10-08T16:58:00+08:00。
+   * 刻意带上时区偏移：Obsidian / YAML 会把不带偏移的时间按 UTC 解析，导致差 8 小时甚至跨天。
+   */
+  formatTimestamp(date: Date): string {
+    const pad = (value: number): string => String(value).padStart(2, "0");
+    const offset = -date.getTimezoneOffset();
+    const sign = offset < 0 ? "-" : "+";
+    const abs = Math.abs(offset);
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
+      + `T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
+      + `${sign}${pad(Math.floor(abs / 60))}:${pad(abs % 60)}`;
   }
 
   dateText(timestamp: number): string {
@@ -1646,6 +1727,7 @@ class OneMinuteEnglishView extends ItemView {
     this.registerEvent(this.app.vault.on("delete", () => this.render()));
     this.registerEvent(this.app.vault.on("rename", () => this.render()));
     this.registerEvent(this.app.metadataCache.on("changed", () => this.render()));
+    this.plugin.scheduleBackfillAddedAt();
     this.render();
   }
 
@@ -2074,6 +2156,13 @@ class OneMinuteEnglishSettingTab extends PluginSettingTab {
     this.valueSetting("“待淘”对应值", "pendingValue", "待淘");
     this.valueSetting("“已淘”对应值", "minedValue", "已淘");
     this.valueSetting("“淘干”对应值", "exhaustedValue", "淘干");
+    new Setting(containerEl)
+      .setName("入库时间属性")
+      .setDesc("待淘按这个属性排序，卡片上的「入库 N 天前」也读它。属性缺失时会按文件创建时间自动补写，因此首次补写请在本机文件时间正确时进行。")
+      .addText((text) => text.setPlaceholder("入库时间").setValue(this.plugin.settings.addedAtProperty).onChange(async (value) => {
+        this.plugin.settings.addedAtProperty = value.trim();
+        await this.plugin.saveSettings();
+      }));
     new Setting(containerEl)
       .setName("上次淘的时间属性")
       .setDesc("已淘的素材按这个属性排序，最久没碰的排在最前面。")
